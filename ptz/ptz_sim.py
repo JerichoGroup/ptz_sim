@@ -166,8 +166,8 @@ class PTZSim:
             self._cmd_vel = (0.0, 0.0)
             self._cmd_t = 0.0
         with self._state_lock:
-            self._pan += float(dp) * 45.0
-            self._tilt += float(dt) * 45.0
+            self._pan  -= float(dp) * 45.0   # ENU: +yaw = CCW = pan left
+            self._tilt -= float(dt) * 45.0   # ENU: +pitch = nose down
         self._update_gimbal()
 
     def _apply_zoom(self, target):
@@ -191,8 +191,8 @@ class PTZSim:
 
             if not stale and not self._slewing_home:
                 with self._state_lock:
-                    self._pan += vx * self._pan_vel * DT
-                    self._tilt += vy * self._tilt_vel * DT
+                    self._pan  -= vx * self._pan_vel  * DT   # ENU: +yaw = CCW = pan left
+                    self._tilt -= vy * self._tilt_vel * DT   # ENU: +pitch = nose down
                 self._update_gimbal()
 
             time.sleep(DT)

@@ -125,7 +125,11 @@ class OgnSimGlobalPositionToLocalPosition:
         offset_roll = math.radians(db.inputs.offset_roll)
         offset_pitch = math.radians(db.inputs.offset_pitch)
         offset_yaw = math.radians(db.inputs.offset_yaw)
-        q_offset = euler2quat(offset_roll, offset_pitch, offset_yaw, axes=EULER_AXES)
+        # PTZ rotation order: yaw around world Z first, then pitch around the resulting
+        # local horizontal axis, then roll.  Intrinsic ZYX achieves this: each rotation
+        # is around the body axis *after* the previous rotation, so pan does not tilt the
+        # tilt axis and tilt does not tilt the pan axis.
+        q_offset = euler2quat(offset_yaw, offset_pitch, offset_roll, axes='rzyx')
 
         qw, qx, qy, qz = qmult(q_drone, q_offset)
         roll, pitch, yaw = quat2euler((qw, qx, qy, qz), axes=EULER_AXES)
