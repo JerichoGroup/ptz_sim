@@ -176,7 +176,7 @@ def _tui(stdscr, ptz, host_addr):
 
 def main():
     parser = argparse.ArgumentParser(description="PTZ Sim terminal controller (Jetson-side)")
-    parser.add_argument("--host",        default="192.168.55.2", help="IP of the host running PTZSim")
+    parser.add_argument("--host",        default="192.168.30.171", help="IP of the host running PTZSim")
     parser.add_argument("--host-port",   type=int, default=5005)
     parser.add_argument("--listen-port", type=int, default=5006)
     args = parser.parse_args()
