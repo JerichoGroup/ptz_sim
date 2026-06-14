@@ -8,7 +8,7 @@
             }
             dictionary Perspective = {
                 double3 position = (-1.383864785509338, 3.0470284229017777, 0.7023307688547672)
-                double3 target = (0.22774294174391985, -0.1572590309354429, 0.02240903388513782)
+                double3 target = (0.22774294174392362, -0.1572590309354509, 0.022409033885136043)
             }
             dictionary Right = {
                 double3 position = (0, -500, 0)
@@ -141,10 +141,10 @@ def Xform "Root"
         {
             custom uint inputs:execIn
             uint inputs:execIn.connect = </Root/ROS2CameraImageExport/createViewport.outputs:execOut>
-            custom uint inputs:height = 512
+            custom uint inputs:height = 1080
             custom token inputs:viewport
             token inputs:viewport.connect = </Root/ROS2CameraImageExport/createViewport.outputs:viewport>
-            custom uint inputs:width = 640
+            custom uint inputs:width = 1920
             token node:type = "omni.isaac.core_nodes.IsaacSetViewportResolution"
             int node:typeVersion = 1
             custom uint outputs:execOut (

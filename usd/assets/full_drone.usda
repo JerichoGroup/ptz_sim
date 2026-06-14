@@ -1,0 +1,834 @@
+#usda 1.0
+(
+    customLayerData = {
+        dictionary cameraSettings = {
+            dictionary Front = {
+                double3 position = (5, 0, 0)
+                double radius = 5
+            }
+            dictionary Perspective = {
+                double3 position = (24.820425248288764, 8.481310133498884, 22.16935671812527)
+                double3 target = (23.157902987936385, 7.763660340942251, 20.694060347937697)
+            }
+            dictionary Right = {
+                double3 position = (0, -5, 0)
+                double radius = 5
+            }
+            dictionary Top = {
+                double3 position = (0, 0, 5)
+                double radius = 5
+            }
+            string boundCamera = "/OmniverseKit_Persp"
+        }
+        dictionary metricsAssembler = {
+            dictionary "/Combat_FPV_Drone_Kamikaze_01" = {
+            }
+            dictionary "/World/Combat_FPV_Drone_Kamikaze" = {
+            }
+            dictionary "/World/Combat_FPV_Drone_Kamikaze_01" = {
+            }
+            dictionary "/World/Dji_FPV_by_SDC____High_performance_drone" = {
+            }
+            dictionary "/World/FPV_Drone" = {
+            }
+            int version = 1
+        }
+        dictionary navmeshSettings = {
+            double agentHeight = 180
+            double agentRadius = 20
+            bool excludeRigidBodies = 1
+            int ver = 1
+            double voxelCeiling = 460
+        }
+        dictionary omni_layer = {
+            string authoring_layer = "./prop_spin.usda"
+            dictionary locked = {
+            }
+            dictionary muteness = {
+            }
+        }
+        dictionary renderSettings = {
+            float3 "rtx:debugView:pixelDebug:textColor" = (0, 1e18, 0)
+            float3 "rtx:fog:fogColor" = (0.75, 0.75, 0.75)
+            float3 "rtx:index:regionOfInterestMax" = (0, 0, 0)
+            float3 "rtx:index:regionOfInterestMin" = (0, 0, 0)
+            float3 "rtx:iray:environment_dome_ground_position" = (0, 0, 0)
+            float3 "rtx:iray:environment_dome_ground_reflectivity" = (0, 0, 0)
+            float3 "rtx:iray:environment_dome_rotation_axis" = (3.4028235e38, 3.4028235e38, 3.4028235e38)
+            float3 "rtx:post:backgroundZeroAlpha:backgroundDefaultColor" = (0, 0, 0)
+            float3 "rtx:post:colorcorr:contrast" = (1, 1, 1)
+            float3 "rtx:post:colorcorr:gain" = (1, 1, 1)
+            float3 "rtx:post:colorcorr:gamma" = (1, 1, 1)
+            float3 "rtx:post:colorcorr:offset" = (0, 0, 0)
+            float3 "rtx:post:colorcorr:saturation" = (1, 1, 1)
+            float3 "rtx:post:colorgrad:blackpoint" = (0, 0, 0)
+            float3 "rtx:post:colorgrad:contrast" = (1, 1, 1)
+            float3 "rtx:post:colorgrad:gain" = (1, 1, 1)
+            float3 "rtx:post:colorgrad:gamma" = (1, 1, 1)
+            float3 "rtx:post:colorgrad:lift" = (0, 0, 0)
+            float3 "rtx:post:colorgrad:multiply" = (1, 1, 1)
+            float3 "rtx:post:colorgrad:offset" = (0, 0, 0)
+            float3 "rtx:post:colorgrad:whitepoint" = (1, 1, 1)
+            float3 "rtx:post:lensDistortion:lensFocalLengthArray" = (10, 30, 50)
+            float3 "rtx:post:lensFlares:anisoFlareFalloffX" = (450, 475, 500)
+            float3 "rtx:post:lensFlares:anisoFlareFalloffY" = (10, 10, 10)
+            float3 "rtx:post:lensFlares:cutoffPoint" = (2, 2, 2)
+            float3 "rtx:post:lensFlares:haloFlareFalloff" = (10, 10, 10)
+            float3 "rtx:post:lensFlares:haloFlareRadius" = (75, 75, 75)
+            float3 "rtx:post:lensFlares:isotropicFlareFalloff" = (50, 50, 50)
+            float3 "rtx:post:tonemap:whitepoint" = (1, 1, 1)
+            float3 "rtx:raytracing:inscattering:singleScatteringAlbedo" = (0.9, 0.9, 0.9)
+            float3 "rtx:raytracing:inscattering:transmittanceColor" = (0.5, 0.5, 0.5)
+            float3 "rtx:sceneDb:ambientLightColor" = (0.1, 0.1, 0.1)
+            bool "rtx:useViewLightingMode" = 1
+        }
+    }
+    defaultPrim = "World"
+    endTimeCode = 100
+    metersPerUnit = 1
+    startTimeCode = 0
+    timeCodesPerSecond = 60
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def "Combat_FPV_Drone_Kamikaze" (
+        prepend payload = @/home/ofer/clones/drones_gen/usd/assets/Combat_FPV_Drone_Kamikaze.usdz@
+    )
+    {
+        quatf xformOp:orient = (1, 0, 0, 0)
+        double xformOp:rotateX:unitsResolve = 90
+        float3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
+        double3 xformOp:translate = (0, 2.843230016771747e-16, 1.2804769644061873)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+        over "Meshes"
+        {
+            over "Sketchfab_model"
+            {
+                over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                {
+                    over "RootNode"
+                    {
+                        over "desirefx_me_4" (
+                            active = false
+                        )
+                        {
+                        }
+
+                        over "desirefx_me_5" (
+                            active = false
+                        )
+                        {
+                        }
+
+                        over "desirefx_me_6" (
+                            active = false
+                        )
+                        {
+                        }
+
+                        over "desirefx_me_7" (
+                            active = false
+                        )
+                        {
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    def Xform "Prop_01" (
+        kind = "group"
+    )
+    {
+        token visibility = "inherited" (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:rotateXYZ = (0, 0, 7300000) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:scale = (1, 1, 1) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        double3 xformOp:translate = (0.06070311158255359, 5.741492436553457, -1.6652416781119217) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:translate:pivot = (1.390262, -4.13, 3.085108)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:translate:pivot", "xformOp:rotateXYZ", "xformOp:scale", "!invert!xformOp:translate:pivot"]
+
+        def "Combat_FPV_Drone_Kamikaze_01" (
+            prepend payload = @file:/home/ofer/clones/drones_gen/usd/assets/Combat_FPV_Drone_Kamikaze.usdz@
+        )
+        {
+            token visibility = "inherited"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            double xformOp:rotateX:unitsResolve = 90
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
+            double3 xformOp:translate = (0, 0, 1.8641252912259902)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+            over "Meshes"
+            {
+                over "Sketchfab_model"
+                {
+                    over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                    {
+                        over "RootNode"
+                        {
+                            over "desirefx_me_5"
+                            {
+                                matrix4d xformOp:transform = ( (39.370079040527344, 0, 0, 0), (0, 39.370079040527344, 0.000006426537150519601, 0), (0, -0.000006426537150519601, 39.370079040527344, 0), (-16, 76.37669197485258, 180.17018647565814, 1) )
+
+                                over "desirefx_me_5_fpv_drone_one_002_0"
+                                {
+                                    uniform token[] xformOpOrder = []
+
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                    }
+                                }
+                            }
+
+                            over "desirefx_me_1" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_2" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_3" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_4" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_6" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_7" (
+                                active = false
+                            )
+                            {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    def Xform "Prop_02" (
+        kind = "group"
+    )
+    {
+        token visibility = "inherited" (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:rotateXYZ = (0, 0, 7300000) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:scale = (1, 1, 1) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        double3 xformOp:translate = (-3.1713656303163704, 5.699026113178104, -1.6652416781119288) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:translate:pivot = (1.390262, -4.13, 3.085108)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:translate:pivot", "xformOp:rotateXYZ", "xformOp:scale", "!invert!xformOp:translate:pivot"]
+
+        def "Combat_FPV_Drone_Kamikaze_01" (
+            prepend payload = @file:/home/ofer/clones/drones_gen/usd/assets/Combat_FPV_Drone_Kamikaze.usdz@
+        )
+        {
+            token visibility = "inherited"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            double xformOp:rotateX:unitsResolve = 90
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
+            double3 xformOp:translate = (0, 0, 1.8641252912259902)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+            over "Meshes"
+            {
+                over "Sketchfab_model"
+                {
+                    over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                    {
+                        over "RootNode"
+                        {
+                            over "desirefx_me_5"
+                            {
+                                matrix4d xformOp:transform = ( (39.370079040527344, 0, 0, 0), (0, 39.370079040527344, 0.000006426537150519601, 0), (0, -0.000006426537150519601, 39.370079040527344, 0), (-16, 76.37669197485258, 180.17018647565814, 1) )
+
+                                over "desirefx_me_5_fpv_drone_one_002_0"
+                                {
+                                    uniform token[] xformOpOrder = []
+
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                    }
+                                }
+                            }
+
+                            over "desirefx_me_1" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_2" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_3" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_4" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_6" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_7" (
+                                active = false
+                            )
+                            {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    def Xform "Prop_03" (
+        kind = "group"
+    )
+    {
+        token visibility = "inherited" (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:rotateXYZ = (0, 0, 7300000) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:scale = (1, 1, 1) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        double3 xformOp:translate = (-3.1881751508099114, 2.5677534770507897, -1.665241678111927) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:translate:pivot = (1.390262, -4.13, 3.085108)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:translate:pivot", "xformOp:rotateXYZ", "xformOp:scale", "!invert!xformOp:translate:pivot"]
+
+        def "Combat_FPV_Drone_Kamikaze_01" (
+            prepend payload = @file:/home/ofer/clones/drones_gen/usd/assets/Combat_FPV_Drone_Kamikaze.usdz@
+        )
+        {
+            token visibility = "inherited"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            double xformOp:rotateX:unitsResolve = 90
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
+            double3 xformOp:translate = (0, 0, 1.8641252912259902)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+            over "Meshes"
+            {
+                over "Sketchfab_model"
+                {
+                    over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                    {
+                        over "RootNode"
+                        {
+                            over "desirefx_me_5"
+                            {
+                                matrix4d xformOp:transform = ( (39.370079040527344, 0, 0, 0), (0, 39.370079040527344, 0.000006426537150519601, 0), (0, -0.000006426537150519601, 39.370079040527344, 0), (-16, 76.37669197485258, 180.17018647565814, 1) )
+
+                                over "desirefx_me_5_fpv_drone_one_002_0"
+                                {
+                                    uniform token[] xformOpOrder = []
+
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                    }
+                                }
+                            }
+
+                            over "desirefx_me_1" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_2" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_3" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_4" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_6" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_7" (
+                                active = false
+                            )
+                            {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    def Xform "Prop_04" (
+        kind = "group"
+    )
+    {
+        token visibility = "inherited" (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:rotateXYZ = (0, 0, 7300000) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:scale = (1, 1, 1) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        double3 xformOp:translate = (0.043924613012831015, 2.5502508595668143, -1.6652416781119466) (
+            customData = {
+                bool nonpersistant = 1
+            }
+        )
+        float3 xformOp:translate:pivot = (1.390262, -4.13, 3.085108)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:translate:pivot", "xformOp:rotateXYZ", "xformOp:scale", "!invert!xformOp:translate:pivot"]
+
+        def "Combat_FPV_Drone_Kamikaze_01" (
+            prepend payload = @file:/home/ofer/clones/drones_gen/usd/assets/Combat_FPV_Drone_Kamikaze.usdz@
+        )
+        {
+            token visibility = "inherited"
+            quatf xformOp:orient = (1, 0, 0, 0)
+            double xformOp:rotateX:unitsResolve = 90
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
+            double3 xformOp:translate = (0, 0, 1.8641252912259902)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+            over "Meshes"
+            {
+                over "Sketchfab_model"
+                {
+                    over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                    {
+                        over "RootNode"
+                        {
+                            over "desirefx_me_5"
+                            {
+                                matrix4d xformOp:transform = ( (39.370079040527344, 0, 0, 0), (0, 39.370079040527344, 0.000006426537150519601, 0), (0, -0.000006426537150519601, 39.370079040527344, 0), (-16, 76.37669197485258, 180.17018647565814, 1) )
+
+                                over "desirefx_me_5_fpv_drone_one_002_0"
+                                {
+                                    uniform token[] xformOpOrder = []
+
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                    }
+                                }
+                            }
+
+                            over "desirefx_me_1" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_2" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_3" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_4" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_6" (
+                                active = false
+                            )
+                            {
+                            }
+
+                            over "desirefx_me_7" (
+                                active = false
+                            )
+                            {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    def OmniGraph "PushGraph"
+    {
+        token evaluationMode = "Automatic"
+        token evaluator:type = "push"
+        token fabricCacheBacking = "Shared"
+        int2 fileFormatVersion = (1, 7)
+        token pipelineStage = "pipelineStageSimulation"
+
+        def OmniGraphNode "Prop_01CurveNode"
+        {
+            custom string inputs:IndividualOutputs
+            custom rel inputs:Prim = </World/Prop_01> (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "target"
+                        }
+                    }
+                }
+            )
+            custom timecode inputs:Time
+            custom bool inputs:UseGlobalTime
+            token node:type = "omni.anim.curve.AnimCurve"
+            int node:typeVersion = 5
+            uniform token xformOp:rotateXYZ:x:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:x:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:x:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:x:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:x:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:x:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:x:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:x:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:x:values = [0, 0]
+            uniform token xformOp:rotateXYZ:y:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:y:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:y:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:y:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:y:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:y:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:y:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:y:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:y:values = [0, 0]
+            uniform token xformOp:rotateXYZ:z:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:z:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:z:inTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:inTangentValues = [-2433333.333333333, 2433333.333333333]
+            uniform int64[] xformOp:rotateXYZ:z:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:z:outTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:outTangentValues = [-2433333.333333333, 0]
+            uniform token xformOp:rotateXYZ:z:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:z:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:z:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:z:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:z:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:z:values = [7300000, 0]
+
+            def Output "outputs_AnimFrame"
+            {
+            }
+        }
+
+        def OmniGraphNode "Prop_02CurveNode"
+        {
+            custom string inputs:IndividualOutputs
+            custom rel inputs:Prim = </World/Prop_02> (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "target"
+                        }
+                    }
+                }
+            )
+            custom timecode inputs:Time
+            custom bool inputs:UseGlobalTime
+            token node:type = "omni.anim.curve.AnimCurve"
+            int node:typeVersion = 5
+            uniform token xformOp:rotateXYZ:x:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:x:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:x:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:x:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:x:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:x:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:x:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:x:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:x:values = [0, 0]
+            uniform token xformOp:rotateXYZ:y:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:y:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:y:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:y:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:y:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:y:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:y:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:y:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:y:values = [0, 0]
+            uniform token xformOp:rotateXYZ:z:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:z:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:z:inTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:inTangentValues = [-2433333.333333333, 2433333.333333333]
+            uniform int64[] xformOp:rotateXYZ:z:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:z:outTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:outTangentValues = [-2433333.333333333, 0]
+            uniform token xformOp:rotateXYZ:z:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:z:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:z:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:z:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:z:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:z:values = [7300000, 0]
+
+            def Output "outputs_AnimFrame"
+            {
+            }
+        }
+
+        def OmniGraphNode "Prop_03CurveNode"
+        {
+            custom string inputs:IndividualOutputs
+            custom rel inputs:Prim = </World/Prop_03> (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "target"
+                        }
+                    }
+                }
+            )
+            custom timecode inputs:Time
+            custom bool inputs:UseGlobalTime
+            token node:type = "omni.anim.curve.AnimCurve"
+            int node:typeVersion = 5
+            uniform token xformOp:rotateXYZ:x:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:x:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:x:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:x:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:x:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:x:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:x:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:x:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:x:values = [0, 0]
+            uniform token xformOp:rotateXYZ:y:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:y:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:y:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:y:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:y:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:y:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:y:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:y:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:y:values = [0, 0]
+            uniform token xformOp:rotateXYZ:z:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:z:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:z:inTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:inTangentValues = [-2433333.333333333, 2433333.333333333]
+            uniform int64[] xformOp:rotateXYZ:z:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:z:outTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:outTangentValues = [-2433333.333333333, 0]
+            uniform token xformOp:rotateXYZ:z:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:z:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:z:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:z:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:z:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:z:values = [7300000, 0]
+
+            def Output "outputs_AnimFrame"
+            {
+            }
+        }
+
+        def OmniGraphNode "Prop_04CurveNode"
+        {
+            custom string inputs:IndividualOutputs
+            custom rel inputs:Prim = </World/Prop_04> (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "target"
+                        }
+                    }
+                }
+            )
+            custom timecode inputs:Time
+            custom bool inputs:UseGlobalTime
+            token node:type = "omni.anim.curve.AnimCurve"
+            int node:typeVersion = 5
+            uniform token xformOp:rotateXYZ:x:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:x:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:x:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:x:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:x:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:x:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:x:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:x:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:x:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:x:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:x:values = [0, 0]
+            uniform token xformOp:rotateXYZ:y:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:y:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:y:inTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:inTangentValues = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:y:outTangentTypes = ["auto", "auto"]
+            uniform double[] xformOp:rotateXYZ:y:outTangentValues = [0, 0]
+            uniform token xformOp:rotateXYZ:y:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:y:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:y:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:y:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:y:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:y:values = [0, 0]
+            uniform token xformOp:rotateXYZ:z:defaultTangentType = "auto"
+            uniform int64[] xformOp:rotateXYZ:z:inTangentTimes = [0, -78400000]
+            uniform token[] xformOp:rotateXYZ:z:inTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:inTangentValues = [-2433333.333333333, 2433333.333333333]
+            uniform int64[] xformOp:rotateXYZ:z:outTangentTimes = [78400000, 0]
+            uniform token[] xformOp:rotateXYZ:z:outTangentTypes = ["linear", "linear"]
+            uniform double[] xformOp:rotateXYZ:z:outTangentValues = [-2433333.333333333, 0]
+            uniform token xformOp:rotateXYZ:z:postInfinityType = "constant"
+            uniform token xformOp:rotateXYZ:z:preInfinityType = "constant"
+            uniform bool[] xformOp:rotateXYZ:z:tangentBrokens = [0, 0]
+            uniform bool[] xformOp:rotateXYZ:z:tangentWeighteds = [0, 0]
+            uniform int64[] xformOp:rotateXYZ:z:times = [0, 235200000]
+            uniform double[] xformOp:rotateXYZ:z:values = [7300000, 0]
+
+            def Output "outputs_AnimFrame"
+            {
+            }
+        }
+    }
+}
+
+def Xform "Environment"
+{
+    quatd xformOp:orient = (1, 0, 0, 0)
+    double3 xformOp:scale = (1, 1, 1)
+    double3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+    def DistantLight "defaultLight" (
+        prepend apiSchemas = ["ShapingAPI"]
+    )
+    {
+        float inputs:angle = 1
+        float inputs:intensity = 3000
+        float inputs:shaping:cone:angle = 180
+        float inputs:shaping:cone:softness
+        float inputs:shaping:focus
+        color3f inputs:shaping:focusTint
+        asset inputs:shaping:ies:file
+        quatd xformOp:orient = (0.6532814824381883, 0.2705980500730985, 0.27059805007309845, 0.6532814824381882)
+        double3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+    }
+}
+

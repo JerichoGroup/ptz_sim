@@ -6,10 +6,10 @@ This file contains consts used to configure and initialize the simulation
 GIMBAL_ROLL_DEG = 0.0
 GIMBAL_PITCH_DEG = 0.0
 GIMBAL_YAW_DEG = 0.0
-RESOLUTION_WIDTH = 1280         
-RESOLUTION_HEIGHT = 720         
-CAMERA_FOV = 78.1               # degrees
-FOCAL_LENGTH = 22.7885          # mm, computed from FOV and sensor size
+RESOLUTION_WIDTH = 1920     
+RESOLUTION_HEIGHT = 1080         
+CAMERA_FOV = 78.1                 # degrees
+FOCAL_LENGTH = 22.7885            # mm, computed from FOV and sensor size
 
 
 # ========================== Cesium consts ============================ #
@@ -30,10 +30,10 @@ BBOXES_TOPIC_NAME = "/isaac_core/bbox"
 IMAGE_PUBLISHER_TOPIC_NAME = "/isaac_core/image_rgb"
 
 
-# ======================= Image RTP ========================== #
+# =========================== Image RTP =============================== #
 RTP_VIDEO_PORT = 5004
 RTP_META_PORT = 5005
 
 
-# ======================= Network ========================== #
+# ============================ Network ================================ #
 HOST_IP = "127.0.0.1"

@@ -7,15 +7,15 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (4703.984100657648, -2723.4052324605673, 204.0060434675708)
-                double3 target = (4703.969418222499, -2723.6150805980133, 203.69315769768968)
+                double3 position = (-11.680102767995574, -0.8545974341416717, 11.34438833598792)
+                double3 target = (-0.4609508709617991, -0.03481831122099577, 1.280476824771549)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
                 double radius = 5
             }
             dictionary Top = {
-                double3 position = (0, 0, 5)
+                double3 position = (5.646633467575665e-16, 3.1142982979923504e-16, 38.00292112586935)
                 double radius = 5
             }
             string boundCamera = "/OmniverseKit_Persp"
@@ -246,47 +246,510 @@ def "CesiumServers"
     }
 }
 
-def Xform "bboxes"
+def Xform "bboxes" (
+    prepend apiSchemas = ["CesiumGlobeAnchorSchemaAPI"]
+)
 {
-    quatd xformOp:orient = (1, 0, 0, 0)
-    double3 xformOp:scale = (1, 1, 1)
-    double3 xformOp:translate = (0, 0, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+    prepend rel cesium:anchor:georeferenceBinding = </NablusCesiumGeoreference>
+    double cesium:anchor:height = 516.7000000004931
+    double cesium:anchor:latitude = 32.224810000000005
+    double cesium:anchor:longitude = 35.25621000000001
+    double3 cesium:anchor:position = (4410542.061819227, 3117779.8066218565, 3381821.9013784486)
+    quatd xformOp:orient = (1, -2.7755575615628904e-17, -2.311115933264682e-33, 2.7755575615628914e-17)
+    double3 xformOp:scale = (1, 1.0000000000000002, 1.0000000000000004)
+    double3 xformOp:translate = (0, 4.656612873077393e-10, 9.313225746154785e-10)
+    uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-    def Mesh "Cube" (
-        prepend apiSchemas = ["CesiumGlobeAnchorSchemaAPI", "SemanticsAPI:Semantics_sYmu", "SemanticsAPI:Semantics_0CQz", "SemanticsAPI:Semantics_65Zw", "SemanticsAPI:Semantics_wN6I", "SemanticsAPI:Semantics_orTz"]
+    def "full_drone" (
+        prepend apiSchemas = ["CesiumGlobeAnchorSchemaAPI"]
+        prepend payload = @file:/home/ofer/clones/drones_gen/usd/assets/full_drone.usda@
     )
     {
         prepend rel cesium:anchor:georeferenceBinding = </NablusCesiumGeoreference>
-        double cesium:anchor:height = 611.747219985658
-        double cesium:anchor:latitude = 32.199616690480546
-        double cesium:anchor:longitude = 35.3059762207433
-        double3 cesium:anchor:position = (4409113.380674908, 3122516.7836247077, 3379508.665054079)
-        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
-        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
-        int[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 6, 2, 3, 7, 4, 5, 1, 0, 4, 0, 2, 6, 5, 7, 3, 1]
-        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)] (
-            interpolation = "faceVarying"
+        double cesium:anchor:height = 516.6999999996224
+        double cesium:anchor:latitude = 32.22480999999999
+        double cesium:anchor:longitude = 35.25621
+        double3 cesium:anchor:position = (4410542.061819228, 3117779.8066218565, 3381821.901378448)
+        double3 xformOp:rotateXYZ = (-3.1805546814635156e-15, -1.7655625192200626e-31, 3.1805546814635168e-15)
+        double3 xformOp:scale = (1, 1.0000000000000002, 1.0000000000000004)
+        double3 xformOp:translate = (-4.656612873077393e-10, 0, 1.862645149230957e-9)
+        uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+        over "Combat_FPV_Drone_Kamikaze"
+        {
+            over "Materials"
+            {
+                over "fpv_drone_two" (
+                    prepend apiSchemas = ["SemanticsAPI:Semantics_sYmu"]
+                )
+                {
+                    string semantic:Semantics_sYmu:params:semanticData = "fpvdronetwo"
+                    string semantic:Semantics_sYmu:params:semanticType = "class"
+                }
+
+                over "fpv_drone_one" (
+                    prepend apiSchemas = ["SemanticsAPI:Semantics_0CQz"]
+                )
+                {
+                    string semantic:Semantics_0CQz:params:semanticData = "fpvdroneone"
+                    string semantic:Semantics_0CQz:params:semanticType = "class"
+                }
+
+                over "fpv_drone_three" (
+                    prepend apiSchemas = ["SemanticsAPI:Semantics_65Zw"]
+                )
+                {
+                    string semantic:Semantics_65Zw:params:semanticData = "fpvdronethree"
+                    string semantic:Semantics_65Zw:params:semanticType = "class"
+                }
+            }
+
+            over "Meshes"
+            {
+                over "Sketchfab_model"
+                {
+                    over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                    {
+                        over "RootNode"
+                        {
+                            over "desirefx_me_1"
+                            {
+                                over "desirefx_me_1_fpv_drone_two_0"
+                                {
+                                    over "desirefx_me_1_fpv_drone_two_0" (
+                                        prepend apiSchemas = ["SemanticsAPI:Semantics_orTz"]
+                                    )
+                                    {
+                                        string semantic:Semantics_orTz:params:semanticData = "desirefxme1fpvdronetwo"
+                                        string semantic:Semantics_orTz:params:semanticType = "class"
+                                    }
+                                }
+                            }
+
+                            over "desirefx_me_2"
+                            {
+                                over "desirefx_me_2_fpv_drone_one_0"
+                                {
+                                    over "desirefx_me_2_fpv_drone_one_0" (
+                                        prepend apiSchemas = ["SemanticsAPI:Semantics_4Wbv"]
+                                    )
+                                    {
+                                        string semantic:Semantics_4Wbv:params:semanticData = "desirefxme2fpvdroneone"
+                                        string semantic:Semantics_4Wbv:params:semanticType = "class"
+                                    }
+                                }
+                            }
+
+                            over "desirefx_me_3"
+                            {
+                                over "desirefx_me_3_fpv_drone_three_0"
+                                {
+                                    over "desirefx_me_3_fpv_drone_three_0" (
+                                        prepend apiSchemas = ["SemanticsAPI:Semantics_wN6I"]
+                                    )
+                                    {
+                                        string semantic:Semantics_wN6I:params:semanticData = "desirefxme3fpvdronethree"
+                                        string semantic:Semantics_wN6I:params:semanticType = "class"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        over "Prop_01"
+        {
+            over "Combat_FPV_Drone_Kamikaze_01"
+            {
+                over "Materials"
+                {
+                    over "fpv_drone_two" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_SImG"]
+                    )
+                    {
+                        string semantic:Semantics_SImG:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_SImG:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_one" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_dpQw"]
+                    )
+                    {
+                        string semantic:Semantics_dpQw:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_dpQw:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_three" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_8jpc"]
+                    )
+                    {
+                        string semantic:Semantics_8jpc:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_8jpc:params:semanticType = "class"
+                    }
+                }
+
+                over "Meshes"
+                {
+                    over "Sketchfab_model"
+                    {
+                        over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                        {
+                            over "RootNode"
+                            {
+                                over "desirefx_me_5"
+                                {
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                        over "desirefx_me_5_fpv_drone_one_002_0" (
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_vJTG"]
+                                        )
+                                        {
+                                            string semantic:Semantics_vJTG:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_vJTG:params:semanticType = "class"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        over "Prop_02"
+        {
+            over "Combat_FPV_Drone_Kamikaze_01"
+            {
+                over "Materials"
+                {
+                    over "fpv_drone_two" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_kEvs"]
+                    )
+                    {
+                        string semantic:Semantics_kEvs:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_kEvs:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_one" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_hV49"]
+                    )
+                    {
+                        string semantic:Semantics_hV49:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_hV49:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_three" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_GW1U"]
+                    )
+                    {
+                        string semantic:Semantics_GW1U:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_GW1U:params:semanticType = "class"
+                    }
+                }
+
+                over "Meshes"
+                {
+                    over "Sketchfab_model"
+                    {
+                        over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                        {
+                            over "RootNode"
+                            {
+                                over "desirefx_me_5"
+                                {
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                        over "desirefx_me_5_fpv_drone_one_002_0" (
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_dewN"]
+                                        )
+                                        {
+                                            string semantic:Semantics_dewN:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_dewN:params:semanticType = "class"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        over "Prop_03"
+        {
+            over "Combat_FPV_Drone_Kamikaze_01"
+            {
+                over "Materials"
+                {
+                    over "fpv_drone_two" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_z942"]
+                    )
+                    {
+                        string semantic:Semantics_z942:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_z942:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_one" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_t7QD"]
+                    )
+                    {
+                        string semantic:Semantics_t7QD:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_t7QD:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_three" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_pw9w"]
+                    )
+                    {
+                        string semantic:Semantics_pw9w:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_pw9w:params:semanticType = "class"
+                    }
+                }
+
+                over "Meshes"
+                {
+                    over "Sketchfab_model"
+                    {
+                        over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                        {
+                            over "RootNode"
+                            {
+                                over "desirefx_me_5"
+                                {
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                        over "desirefx_me_5_fpv_drone_one_002_0" (
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_AFkr"]
+                                        )
+                                        {
+                                            string semantic:Semantics_AFkr:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_AFkr:params:semanticType = "class"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        over "Prop_04"
+        {
+            over "Combat_FPV_Drone_Kamikaze_01"
+            {
+                over "Materials"
+                {
+                    over "fpv_drone_two" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_Zjqo"]
+                    )
+                    {
+                        string semantic:Semantics_Zjqo:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_Zjqo:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_one" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_geAd"]
+                    )
+                    {
+                        string semantic:Semantics_geAd:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_geAd:params:semanticType = "class"
+                    }
+
+                    over "fpv_drone_three" (
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_5qtV"]
+                    )
+                    {
+                        string semantic:Semantics_5qtV:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_5qtV:params:semanticType = "class"
+                    }
+                }
+
+                over "Meshes"
+                {
+                    over "Sketchfab_model"
+                    {
+                        over "Combat_FPV_Drone_Kamikaze_7_Inches_Low_poly_3D_model_fbx"
+                        {
+                            over "RootNode"
+                            {
+                                over "desirefx_me_5"
+                                {
+                                    over "desirefx_me_5_fpv_drone_one_002_0"
+                                    {
+                                        over "desirefx_me_5_fpv_drone_one_002_0" (
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_PkUj"]
+                                        )
+                                        {
+                                            string semantic:Semantics_PkUj:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_PkUj:params:semanticType = "class"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+def OmniGraph "ActionGraph"
+{
+    token evaluationMode = "Automatic"
+    token evaluator:type = "execution"
+    token fabricCacheBacking = "Shared"
+    int2 fileFormatVersion = (1, 7)
+    token pipelineStage = "pipelineStageSimulation"
+
+    def OmniGraphNode "on_playback_tick" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        token node:type = "omni.graph.action.OnPlaybackTick"
+        int node:typeVersion = 1
+        custom double outputs:deltaSeconds
+        custom double outputs:frame
+        custom uint outputs:tick (
+            customData = {
+                bool isExecution = 1
+            }
         )
-        point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5)]
-        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1), (1, 0), (1, 1), (0, 1), (0, 0), (0, 1), (0, 0), (1, 0), (1, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (1, 0), (1, 1), (0, 1), (0, 0)] (
-            interpolation = "faceVarying"
+        custom double outputs:time
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (106, 102)
+    }
+
+    def OmniGraphNode "udp_to_global_position" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
+        custom int inputs:udp_port = 33335
+        token node:type = "omni.sim.position.UDPToGlobalPosition"
+        int node:typeVersion = 1
+        custom vector3d outputs:global_orientation
+        custom vector3d outputs:global_position
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (361, 109)
+    }
+
+    def OmniGraphNode "global_position_to_local_position" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom vector3d inputs:enu_reference
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
+        custom vector3d inputs:global_orientation
+        prepend vector3d inputs:global_orientation.connect = </ActionGraph/udp_to_global_position.outputs:global_orientation>
+        custom vector3d inputs:global_position
+        prepend vector3d inputs:global_position.connect = </ActionGraph/udp_to_global_position.outputs:global_position>
+        custom float inputs:offset_pitch
+        custom float inputs:offset_roll
+        custom float inputs:offset_yaw
+        token node:type = "omni.sim.math.GlobalPositionToLocalPosition"
+        int node:typeVersion = 1
+        custom vector3f outputs:global_orientation
+        custom vector3d outputs:global_position
+        custom quatf outputs:local_orientation
+        custom vector3f outputs:local_position
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (627.16187, 177.4065)
+    }
+
+    def OmniGraphNode "write_prim_attribute" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
+        custom token inputs:name = "xformOp:translate"
+        custom rel inputs:prim (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        string relType = "target"
+                    }
+                }
+            }
         )
-        string semantic:Semantics_0CQz:params:semanticData = "Cube"
-        string semantic:Semantics_0CQz:params:semanticType = "class"
-        string semantic:Semantics_65Zw:params:semanticData = "Cube"
-        string semantic:Semantics_65Zw:params:semanticType = "class"
-        string semantic:Semantics_orTz:params:semanticData = "Cube"
-        string semantic:Semantics_orTz:params:semanticType = "class"
-        string semantic:Semantics_sYmu:params:semanticData = "Cube"
-        string semantic:Semantics_sYmu:params:semanticType = "class"
-        string semantic:Semantics_wN6I:params:semanticData = "Cube"
-        string semantic:Semantics_wN6I:params:semanticType = "class"
-        uniform token subdivisionScheme = "none"
-        quatd xformOp:orient = (0.4817022142508345, 0.4738680537545348, 0.20131048764138496, 0.7091446481376845)
-        double3 xformOp:scale = (30.000000000000252, 30.000000000000178, 30.000000000000192)
-        double3 xformOp:translate = (4692.798828125931, -2792.8815917959437, 92.70816040039062)
-        uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        custom token inputs:primPath = "/bboxes/full_drone"
+        custom bool inputs:usdWriteBack
+        custom bool inputs:usePath = 1
+        custom token inputs:value (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        double3 attrValue = (0, 0, 0)
+                        string resolvedType = "double[3]"
+                    }
+                }
+            }
+        )
+        prepend token inputs:value.connect = </ActionGraph/global_position_to_local_position.outputs:local_position>
+        token node:type = "omni.graph.nodes.WritePrimAttribute"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom bool state:correctlySetup
+        custom uint64 state:destAttrib
+        custom uint64 state:destPath
+        custom uint64 state:destPathToken
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (1005.5304, 402.16202)
+    }
+
+    def OmniGraphNode "write_prim_attribute_01" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
+        custom token inputs:name = "xformOp:orient"
+        custom rel inputs:prim (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        string relType = "target"
+                    }
+                }
+            }
+        )
+        custom token inputs:primPath = "/bboxes/full_drone"
+        custom bool inputs:usdWriteBack
+        custom bool inputs:usePath = 1
+        custom token inputs:value (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        float4 attrValue = (0, 0, 0, 0)
+                        string resolvedType = "quatf[4]"
+                    }
+                }
+            }
+        )
+        prepend token inputs:value.connect = </ActionGraph/global_position_to_local_position.outputs:local_orientation>
+        token node:type = "omni.graph.nodes.WritePrimAttribute"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom bool state:correctlySetup
+        custom uint64 state:destAttrib
+        custom uint64 state:destPath
+        custom uint64 state:destPathToken
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (1022.7685, 74.00274)
     }
 }
 
