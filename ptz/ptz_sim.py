@@ -3,8 +3,10 @@ import socket
 import json
 import threading
 import time
+import math
 
 from isaac_core_dev_kit.isaac_manager.host_isaac_manager import HostIsaacManager
+from isaac_core_dev_kit.udp.one_point_sender import OnePointSender
 import isaac_core_dev_kit.dev_utils as core_utils
 
 
@@ -16,7 +18,12 @@ class PTZSim:
     - Uses Isaac Sim via HostIsaacManager.
     - Uses dev_utils.set_gimbal_angle() for pan/tilt.
     - Maintains internal zoom state (self._zoom).
+    - Implements save_home() and go_home() with smooth slewing.
     """
+
+    # ------------------------------------------------------------------
+    # Initialization
+    # ------------------------------------------------------------------
 
     def __init__(
         self,
@@ -31,20 +38,25 @@ class PTZSim:
         self.jetson_addr = (jetson_ip, jetson_port)
 
         # PTZ state
-        self._pan = 0.0    # yaw
-        self._tilt = 0.0   # pitch
-        self._roll = 0.0   # keep roll at 0 for now
-        self._zoom = 1.0   # [0, 1] normalized zoom
+        self._pan = 0.0     # yaw (degrees)
+        self._tilt = 0.0    # pitch (degrees)
+        self._roll = 0.0    # roll (degrees)
+        self._zoom = 1.0    # normalized [0..1]
+
+        # Home state
+        self._home_pan = None
+        self._home_tilt = None
+        self._home_zoom = None
 
         # Networking
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("0.0.0.0", listen_port))
 
-        # Pose sender socket
         self.pose_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         # Control flags
         self._run = True
+        self._slewing_home = False
 
         # Start threads
         threading.Thread(target=self._recv_loop, daemon=True).start()
@@ -54,7 +66,7 @@ class PTZSim:
         print(f"[Host] Jetson pose target: {self.jetson_addr}")
 
         # Isaac Sim setup
-        ## core_utils.delete_cesium_cache()
+        core_utils.delete_cesium_cache()
         core_utils.safe_rclpy_init()
 
         self._isaac_ctx = HostIsaacManager(
@@ -64,29 +76,27 @@ class PTZSim:
             show_isaac_logs=show_isaac_logs,
         )
 
-    # ----------------------------------------------------------------------
-    # Context manager to run Isaac Sim
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Context manager wrapper
+    # ------------------------------------------------------------------
 
     def run(self):
-        """
-        Run PTZSim inside HostIsaacManager context.
-        Blocks until interrupted.
-        """
+        """Run PTZSim inside HostIsaacManager context."""
         with self._isaac_ctx:
-            print("[Host] Isaac Sim started (HostIsaacManager).")
+            print("[Host] Isaac Sim started.")
             try:
+                self._init_camera_position()
                 while self._run:
                     time.sleep(1.0)
             except KeyboardInterrupt:
-                print("[Host] KeyboardInterrupt, shutting down PTZSim.")
+                print("[Host] KeyboardInterrupt, shutting down.")
             finally:
                 self._run = False
                 core_utils.safe_rclpy_shutdown()
 
-    # ----------------------------------------------------------------------
-    # Receive commands from Jetson
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # UDP receive loop
+    # ------------------------------------------------------------------
 
     def _recv_loop(self):
         while self._run:
@@ -94,11 +104,17 @@ class PTZSim:
                 data, addr = self.sock.recvfrom(4096)
             except OSError:
                 break
+
             try:
                 msg = json.loads(data.decode("utf-8"))
             except Exception:
                 continue
+
             self._handle_cmd(msg, addr)
+
+    # ------------------------------------------------------------------
+    # Command handler
+    # ------------------------------------------------------------------
 
     def _handle_cmd(self, msg, addr):
         print(f"[Host] From {addr}: {msg}")
@@ -119,51 +135,105 @@ class PTZSim:
             self._apply_zoom(msg["zoom_target"])
 
         elif t == "save_home":
-            # For now just log; you can add real home logic later
-            print("[Host] save_home (not implemented yet)")
+            self._save_home()
 
         elif t == "go_home":
-            print("[Host] go_home (not implemented yet)")
+            self._go_home()
 
         elif t == "stop_all":
             print("[Host] stop_all")
             self._run = False
 
-    # ----------------------------------------------------------------------
-    # Simulated PTZ logic using dev_utils.set_gimbal_angle
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # PTZ motion logic
+    # ------------------------------------------------------------------
 
     def _apply_move(self, vx, vy):
         """
-        Continuous-like move: small increments to pan/tilt.
-        vx, vy are velocities in normalized units.
+        ContinuousMove-like behavior.
+        vx, vy are normalized velocities [-1..1].
         """
-        # Scale factors are arbitrary for now; tune later
-        self._pan += float(vx) * 5.0
-        self._tilt += float(vy) * 5.0
+        # Scale to degrees per command tick
+        self._pan += float(vx) * 2.0
+        self._tilt += float(vy) * 2.0
         self._update_gimbal()
 
     def _apply_relative(self, dp, dt):
         """
-        Relative move: direct offsets to pan/tilt.
+        RelativeMove-like behavior.
+        dp, dt are normalized deltas [-1..1].
         """
-        self._pan += float(dp) * 180.0   # map ONVIF-ish units to degrees
-        self._tilt += float(dt) * 180.0
+        # Scale to degrees
+        self._pan += float(dp) * 45.0
+        self._tilt += float(dt) * 45.0
         self._update_gimbal()
 
     def _apply_zoom(self, target):
-        """
-        Zoom: just update internal zoom state for now.
-        """
+        """Update zoom state."""
         self._zoom = float(max(0.0, min(1.0, target)))
-        print(f"[Host] Zoom set to {self._zoom:.2f} (normalized)")
+        print(f"[Host] Zoom set to {self._zoom:.2f}")
+
+    # ------------------------------------------------------------------
+    # Home logic (save + smooth slew)
+    # ------------------------------------------------------------------
+
+    def _save_home(self):
+        self._home_pan = self._pan
+        self._home_tilt = self._tilt
+        self._home_zoom = self._zoom
+        print(f"[Host] Home saved: pan={self._home_pan:.2f}, tilt={self._home_tilt:.2f}, zoom={self._home_zoom:.2f}")
+
+    def _go_home(self):
+        if self._home_pan is None:
+            print("[Host] go_home called but no home saved.")
+            return
+
+        if self._slewing_home:
+            print("[Host] Already slewing home.")
+            return
+
+        print("[Host] Slewing back to home position...")
+        threading.Thread(target=self._slew_home_thread, daemon=True).start()
+
+    def _slew_home_thread(self):
+        self._slewing_home = True
+
+        start_pan = self._pan
+        start_tilt = self._tilt
+        start_zoom = self._zoom
+
+        end_pan = self._home_pan
+        end_tilt = self._home_tilt
+        end_zoom = self._home_zoom
+
+        duration = 2.0  # seconds
+        steps = int(duration / 0.02)
+
+        for i in range(steps):
+            if not self._run:
+                break
+
+            alpha = i / steps
+
+            # Smooth interpolation (ease-in-out)
+            s = 0.5 - 0.5 * math.cos(math.pi * alpha)
+
+            self._pan = start_pan + (end_pan - start_pan) * s
+            self._tilt = start_tilt + (end_tilt - start_tilt) * s
+            self._zoom = start_zoom + (end_zoom - start_zoom) * s
+
+            self._update_gimbal()
+            time.sleep(0.02)
+
+        print("[Host] Home reached.")
+        self._slewing_home = False
+
+    # ------------------------------------------------------------------
+    # Apply gimbal angles to Isaac Sim
+    # ------------------------------------------------------------------
 
     def _update_gimbal(self):
-        """
-        Apply current pan/tilt/roll to Isaac Sim via dev_utils.
-        """
-        print(f"[Host] set_gimbal_angle(roll={self._roll:.2f}, "
-              f"pitch={self._tilt:.2f}, yaw={self._pan:.2f})")
+        """Send roll/pitch/yaw to Isaac Sim."""
         try:
             core_utils.set_gimbal_angle(
                 roll=self._roll,
@@ -173,9 +243,19 @@ class PTZSim:
         except Exception as e:
             print(f"[Host] set_gimbal_angle error: {e}")
 
-    # ----------------------------------------------------------------------
-    # Send pose updates back to Jetson
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Move Camera to initial position
+    # ------------------------------------------------------------------
+    def _init_camera_position(self):
+
+        camera_point_sender = OnePointSender(lat=32.19965, lon=35.30593, alt=1000.0,
+                            roll=0.0, pitch=0.0, yaw=0.0)
+        
+        camera_point_sender.send_once(32.19965, 35.30593, 1000.0, 0.0, 0.0, 0.0)
+
+    # ------------------------------------------------------------------
+    # Pose updates back to Jetson
+    # ------------------------------------------------------------------
 
     def _pose_loop(self):
         while self._run:
@@ -194,11 +274,15 @@ class PTZSim:
                     )
                 except Exception:
                     pass
-            time.sleep(0.05)  # 20 Hz pose updates
 
+            time.sleep(0.05)  # 20 Hz
+
+
+# ----------------------------------------------------------------------
+# Main entry point
+# ----------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Adjust these to your environment
     CORE_PATH = "/home/ofer/clones/ptz_sim"
     USD_PATH = "./usd/maps/earth/earth.usda"
 
