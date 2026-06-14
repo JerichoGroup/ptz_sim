@@ -55,3 +55,6 @@ def main():
         time.sleep(2)
 
         print("[Jetson] Looping...\n")
+
+if __name__ == "__main__":
+    main()
