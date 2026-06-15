@@ -30,10 +30,18 @@ BBOXES_TOPIC_NAME = "/isaac_core/bbox"
 IMAGE_PUBLISHER_TOPIC_NAME = "/isaac_core/image_rgb"
 
 
-# =========================== Image RTP =============================== #
+# =========================== Image RTSP ============================== #
+# Port 554 is the standard RTSP port (matches CameraConfig.rtsp_main/rtsp_alt).
+# Binding < 1024 requires root or CAP_NET_BIND_SERVICE on Linux.
+RTSP_PORT = 8554
+# Both paths the Jetson's CameraConfig properties construct:
+#   rtsp_main → rtsp://.../unicast/c1/s0/live
+#   rtsp_alt  → rtsp://.../cam/realmonitor?...  (query string stripped by server)
+RTSP_PATHS = ["/unicast/c1/s0/live", "/cam/realmonitor"]
+
+# Legacy UDP constants — kept for reference, no longer used by ImageRTPStreamer
 RTP_VIDEO_PORT = 5004
 RTP_META_PORT = 5005
-
 
 # ============================ Network ================================ #
 HOST_IP = "127.0.0.1"

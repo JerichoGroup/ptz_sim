@@ -74,8 +74,6 @@ class ZoomSubscriber:
 # ── Script node interface ─────────────────────────────────────────────────────
 
 def setup(db):
-    print("$%^$%^$^%$%^$%^$%^$%^$%^$%^$%^%$^$[zoom_node] setup")
-
     if not rclpy.ok():
         try:
             rclpy.init()
@@ -108,8 +106,6 @@ def setup(db):
 
 
 def compute(db):
-    print("$%^$%^$%^$%^$^$%^$%^[zoom_node] compute")
-
     zoom = db.internal_state.zoom_subscriber.zoom
 
     if zoom is None or zoom == db.internal_state.last_zoom:

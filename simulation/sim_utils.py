@@ -46,7 +46,7 @@ OPTIONAL_USDS = {
 
 # <flag_name>: [<lib_init_arg1>, <lib_init_arg2>, ...]
 OPTIONAL_SIM_LIBS = {
-    "image_rtp": [consts.IMAGE_PUBLISHER_TOPIC_NAME, consts.HOST_IP, consts.RTP_VIDEO_PORT, consts.RTP_META_PORT],
+    "image_rtp": [consts.IMAGE_PUBLISHER_TOPIC_NAME, consts.RTSP_PORT, consts.RTSP_PATHS],
 }
 
 
