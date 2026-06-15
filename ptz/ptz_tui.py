@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-PTZ Sim terminal controller — run from Jetson over SSH, no display needed.
+PTZ Sim terminal controller — run over SSH, no display needed.
 
 Usage:
-    python3 ptz_tui.py --host <host-ip>
-    python3 ptz_tui.py --host 192.168.55.2 --host-port 5005 --listen-port 5006
+    python3 ptz_tui.py                    # Jetson mode (connects to 192.168.30.171)
+    python3 ptz_tui.py --host 127.0.0.1   # Host mode
+    python3 ptz_tui.py --host-port 5005 --listen-port 5006
 """
 
 import argparse
@@ -18,11 +19,13 @@ MOVE_VEL   = 0.5    # normalised velocity sent by arrow keys
 REL_DELTA  = 0.05   # delta for WASD relative_move
 CAZ_ZOOM   = 0.70   # zoom target used by the 'c' center_and_zoom test
 
+JETSON_IP  = "192.168.30.171"
+HOST_IP    = "127.0.0.1"
+
 
 # ── Drawing helpers ───────────────────────────────────────────────────────────
 
 def _safe_addstr(win, row, col, text, attr=0):
-    """addstr that silently drops the call if it would overflow the window."""
     h, w = win.getmaxyx()
     if row < 0 or row >= h or col < 0:
         return
@@ -35,14 +38,15 @@ def _safe_addstr(win, row, col, text, attr=0):
         pass
 
 
-def _draw(win, ptz, last_cmd, host_addr):
+def _draw(win, ptz, last_cmd, mode):
     win.erase()
     _, W = win.getmaxyx()
     sep = "─" * (W - 1)
-
     bold = curses.A_BOLD
 
-    _safe_addstr(win, 0, 0, f" PTZ Sim Controller  →  {host_addr}    [q = quit]", bold)
+    host_str = f"{ptz.host_addr[0]}:{ptz.host_addr[1]}"
+    _safe_addstr(win, 0, 0,
+        f" PTZ Sim  [mode: {mode}]  →  {host_str}    [q=quit  m=toggle mode]", bold)
     _safe_addstr(win, 1, 0, sep)
 
     pan, tilt, zoom, ts = ptz.get_pose()
@@ -59,15 +63,16 @@ def _draw(win, ptz, last_cmd, host_addr):
     _safe_addstr(win, 6, 2, "Controls:", bold)
 
     controls = [
-        ("← → ↑ ↓",    "continuous pan/tilt  (hold key)"),
-        ("+ -",         "zoom_in / zoom_out"),
-        ("[ ]",         "zoom_search / zoom_track"),
-        ("w a s d",     f"relative_move ±{REL_DELTA}  (tilt+ pan- tilt- pan+)"),
-        ("c",           f"center_and_zoom(dp=0.02, dt=0.02, zoom={CAZ_ZOOM})"),
-        ("h",           "save_home"),
-        ("g",           "go_home"),
-        ("SPACE",       "stop  (move 0, 0)"),
-        ("q",           "quit"),
+        ("← → ↑ ↓",  "continuous pan/tilt  (hold key)"),
+        ("+ -",       "zoom_in / zoom_out"),
+        ("[ ]",       "zoom_search / zoom_track"),
+        ("w a s d",   f"relative_move ±{REL_DELTA}  (tilt+ pan- tilt- pan+)"),
+        ("c",         f"center_and_zoom(dp=0.02, dt=0.02, zoom={CAZ_ZOOM})"),
+        ("h",         "save_home"),
+        ("g",         "go_home"),
+        ("SPACE",     "stop  (move 0, 0)"),
+        ("m",         f"toggle mode  Jetson ({JETSON_IP}) / Host ({HOST_IP})"),
+        ("q",         "quit"),
     ]
     for i, (key, desc) in enumerate(controls):
         _safe_addstr(win, 7 + i, 4, f"{key:<10}  {desc}")
@@ -80,16 +85,18 @@ def _draw(win, ptz, last_cmd, host_addr):
 
 # ── Main TUI loop ─────────────────────────────────────────────────────────────
 
-def _tui(stdscr, ptz, host_addr):
+def _tui(stdscr, ptz, host_port):
     curses.curs_set(0)
-    stdscr.keypad(True)     # enable KEY_UP, KEY_LEFT, etc.
-    stdscr.nodelay(True)    # non-blocking getch
-    stdscr.timeout(50)      # 50 ms ≈ 20 Hz — within the host's cmd_ttl=0.15 s
+    stdscr.keypad(True)
+    stdscr.nodelay(True)
+    stdscr.timeout(50)   # 50 ms ≈ 20 Hz, well within cmd_ttl=0.15 s
 
+    # Determine initial mode from the IP that was passed in
+    mode = "Host" if ptz.host_addr[0] == HOST_IP else "Jetson"
     last_cmd = "—"
 
     while True:
-        _draw(stdscr, ptz, last_cmd, host_addr)
+        _draw(stdscr, ptz, last_cmd, mode)
 
         key = stdscr.getch()
 
@@ -97,6 +104,17 @@ def _tui(stdscr, ptz, host_addr):
         if key == ord('q'):
             ptz.stop_all()
             break
+
+        # ── Mode toggle ───────────────────────────────────────────────────────
+        elif key == ord('m'):
+            if mode == "Jetson":
+                mode = "Host"
+                new_ip = HOST_IP
+            else:
+                mode = "Jetson"
+                new_ip = JETSON_IP
+            ptz.host_addr = (new_ip, host_port)
+            last_cmd = f"mode → {mode}  ({new_ip}:{host_port})"
 
         # ── Continuous pan/tilt (hold key → repeated getch → refreshed TTL) ─
         elif key == curses.KEY_LEFT:
@@ -168,21 +186,17 @@ def _tui(stdscr, ptz, host_addr):
             ptz.move(0.0, 0.0)
             last_cmd = "move(0.0, 0.0)  [stop]"
 
-        # When no arrow key is held, the host's cmd_ttl=0.15 s naturally expires
-        # and the mover loop stops — no explicit stop packet needed.
-
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="PTZ Sim terminal controller (Jetson-side)")
-    parser.add_argument("--host",        default="192.168.30.171", help="IP of the host running PTZSim")
+    parser = argparse.ArgumentParser(description="PTZ Sim terminal controller")
+    parser.add_argument("--host",        default=JETSON_IP, help="Host running PTZSim")
     parser.add_argument("--host-port",   type=int, default=5005)
     parser.add_argument("--listen-port", type=int, default=5006)
     args = parser.parse_args()
 
-    host_addr = f"{args.host}:{args.host_port}"
-    print(f"Connecting to PTZSim at {host_addr} ...")
+    print(f"Connecting to PTZSim at {args.host}:{args.host_port} ...")
 
     ptz = PTZSimController(
         host_ip=args.host,
@@ -190,8 +204,8 @@ def main():
         listen_port=args.listen_port,
     )
 
-    time.sleep(0.3)   # give the pose listener socket time to bind
-    curses.wrapper(_tui, ptz, host_addr)
+    time.sleep(0.3)
+    curses.wrapper(_tui, ptz, args.host_port)
     print("TUI closed.")
 
 

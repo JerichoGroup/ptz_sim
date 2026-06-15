@@ -7,6 +7,7 @@ import math
 
 import rclpy
 from isaac_ros2_messages.msg import Gimbal
+from std_msgs.msg import Float32
 
 from isaac_core_dev_kit.isaac_manager.host_isaac_manager import HostIsaacManager
 from isaac_core_dev_kit.udp.one_point_sender import OnePointSender
@@ -44,7 +45,8 @@ class PTZSim:
         self._pan = 0.0
         self._tilt = 0.0
         self._roll = 0.0
-        self._zoom = 1.0
+        self._zoom = 0.0          # current published zoom (0 = wide)
+        self._zoom_target = 0.0   # target set by _apply_zoom; loop slews toward it
         self._state_lock = threading.Lock()
 
         # Home state
@@ -69,6 +71,7 @@ class PTZSim:
         core_utils.safe_rclpy_init()
         self._gimbal_node = rclpy.create_node("ptz_sim_gimbal_node")
         self._gimbal_pub = self._gimbal_node.create_publisher(Gimbal, "/isaac_core/gimbal", 10)
+        self._zoom_pub   = self._gimbal_node.create_publisher(Float32, "/isaac_core/zoom", 10)
 
         # Networking
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -79,6 +82,7 @@ class PTZSim:
         threading.Thread(target=self._recv_loop, daemon=True).start()
         threading.Thread(target=self._pose_loop, daemon=True).start()
         threading.Thread(target=self._mover_loop, daemon=True).start()
+        threading.Thread(target=self._zoom_loop, daemon=True).start()
 
         print(f"[Host] PTZSim listening on 0.0.0.0:{listen_port}")
         print(f"[Host] Jetson pose target: {self.jetson_addr}")
@@ -171,9 +175,19 @@ class PTZSim:
         self._update_gimbal()
 
     def _apply_zoom(self, target):
+        """Set zoom target; _zoom_loop() will slew smoothly toward it."""
         with self._state_lock:
-            self._zoom = float(max(0.0, min(1.0, target)))
-        print(f"[Host] Zoom set to {self._zoom:.2f}")
+            self._zoom_target = float(max(0.0, min(1.0, target)))
+        print(f"[Host] Zoom target → {self._zoom_target:.3f}")
+
+    def _publish_zoom(self):
+        """Publish current _zoom value to the /isaac_core/zoom topic."""
+        msg = Float32()
+        msg.data = self._zoom
+        try:
+            self._zoom_pub.publish(msg)
+        except Exception as e:
+            print(f"[Host] zoom publish error: {e}")
 
     # ------------------------------------------------------------------
     # 25 Hz ContinuousMove integrator
@@ -195,6 +209,34 @@ class PTZSim:
                     self._tilt -= vy * self._tilt_vel * DT   # ENU: +pitch = nose down
                 self._update_gimbal()
 
+            time.sleep(DT)
+
+    # ------------------------------------------------------------------
+    # 20 Hz zoom slew loop
+    # ------------------------------------------------------------------
+
+    def _zoom_loop(self):
+        """Moves _zoom toward _zoom_target at 1/7 normalised units per second (matching
+        the real camera's zoom_full_s=7.0), publishing whenever the value changes."""
+        DT = 0.05           # 20 Hz
+        MAX_STEP = DT / 7.0 # ≈ 0.00714 per tick → full range takes 7 s
+        while self._run:
+            with self._state_lock:
+                if self._slewing_home:
+                    # slew_home_thread owns _zoom and publishing while slewing
+                    delta = 0.0
+                else:
+                    target = self._zoom_target
+                    current = self._zoom
+                    delta = target - current
+                    if abs(delta) > 1e-6:
+                        step = max(-MAX_STEP, min(MAX_STEP, delta))
+                        self._zoom = current + step
+                    else:
+                        delta = 0.0
+                        self._zoom = target
+            if abs(delta) > 1e-6:
+                self._publish_zoom()
             time.sleep(DT)
 
     # ------------------------------------------------------------------
@@ -246,8 +288,12 @@ class PTZSim:
                 self._tilt = start_tilt + (end_tilt - start_tilt) * s
                 self._zoom = start_zoom + (end_zoom - start_zoom) * s
             self._update_gimbal()
+            self._publish_zoom()
             time.sleep(0.02)
 
+        # Sync target so the zoom loop doesn't re-slew after home completes
+        with self._state_lock:
+            self._zoom_target = end_zoom
         print("[Host] Home reached.")
         self._slewing_home = False
 
@@ -321,6 +367,6 @@ if __name__ == "__main__":
         jetson_port=JETSON_PORT,
         core_path=CORE_PATH,
         usd_path=USD_PATH,
-        show_isaac_logs=False,
+        show_isaac_logs=True,
     )
     sim.run()

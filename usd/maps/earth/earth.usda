@@ -8,7 +8,7 @@
             }
             dictionary Perspective = {
                 double3 position = (-11.680102767995574, -0.8545974341416717, 11.34438833598792)
-                double3 target = (-0.4609508709617991, -0.03481831122099577, 1.280476824771549)
+                double3 target = (-0.46095087096179554, -0.034818311220992215, 1.2804768247715455)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -270,8 +270,8 @@ def Xform "bboxes" (
         double cesium:anchor:latitude = 32.22480999999999
         double cesium:anchor:longitude = 35.25621
         double3 cesium:anchor:position = (4410542.061819228, 3117779.8066218565, 3381821.901378448)
-        double3 xformOp:rotateXYZ = (-3.1805546814635156e-15, -1.7655625192200626e-31, 3.1805546814635168e-15)
-        double3 xformOp:scale = (1, 1.0000000000000002, 1.0000000000000004)
+        double3 xformOp:rotateXYZ = (-6.36110936292703e-15, -0, 3.1805546814635168e-15)
+        double3 xformOp:scale = (1, 1.0000000000000004, 1.0000000000000009)
         double3 xformOp:translate = (-4.656612873077393e-10, 0, 1.862645149230957e-9)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 
@@ -620,7 +620,7 @@ def OmniGraph "ActionGraph"
         )
         custom double outputs:time
         uniform token ui:nodegraph:node:expansionState = "open"
-        uniform float2 ui:nodegraph:node:pos = (106, 102)
+        uniform float2 ui:nodegraph:node:pos = (-114.85501, 167.35501)
     }
 
     def OmniGraphNode "udp_to_global_position" (
@@ -750,6 +750,49 @@ def OmniGraph "ActionGraph"
         custom uint64 state:destPathToken
         uniform token ui:nodegraph:node:expansionState = "open"
         uniform float2 ui:nodegraph:node:pos = (1022.7685, 74.00274)
+    }
+
+    def OmniGraphNode "script_node" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
+        custom string inputs:script = """# This script is executed the first time the script node computes, or the next time
+# it computes after this script is modified or the 'Reset' button is pressed.
+#
+# The following callback functions may be defined in this script:
+#     setup(db): Called immediately after this script is executed
+#     compute(db): Called every time the node computes (should always be defined)
+#     cleanup(db): Called when the node is deleted or the reset button is pressed
+# Available variables:
+#    db: og.Database The node interface, attributes are exposed like db.inputs.foo
+#                    Use db.log_error, db.log_warning to report problems.
+#    og: The omni.graph.core module
+
+
+def setup(db: og.Database):
+    pass
+
+
+def cleanup(db: og.Database):
+    pass
+
+
+def compute(db: og.Database):
+    return True"""
+        custom token inputs:scriptPath = "/home/ofer/clones/ptz_sim/simulation/script_nodes/zoom_node.py"
+        custom bool inputs:usePath = 1
+        token node:type = "omni.graph.scriptnode.ScriptNode"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom bool state:omni_initialized
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (175.46771, 306.1258)
     }
 }
 
