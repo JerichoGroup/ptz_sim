@@ -34,6 +34,7 @@ class PTZSim:
         core_path="/home/ofer/clones/ptz_sim",
         usd_path="./usd/maps/earth/earth.usda",
         show_isaac_logs=False,
+        image_rtp=False,
         pan_vel=60.0,   # deg/s at vx=1.0
         tilt_vel=60.0,  # deg/s at vy=1.0
         cmd_ttl=0.15,   # seconds before a coalesced move command goes stale
@@ -92,6 +93,7 @@ class PTZSim:
             usd_path=usd_path,
             com_udp=True,
             show_isaac_logs=show_isaac_logs,
+            image_rtp=image_rtp,
         )
 
     # ------------------------------------------------------------------
@@ -368,5 +370,6 @@ if __name__ == "__main__":
         core_path=CORE_PATH,
         usd_path=USD_PATH,
         show_isaac_logs=True,
+        image_rtp=True,
     )
     sim.run()

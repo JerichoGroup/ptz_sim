@@ -396,6 +396,10 @@ class PTZController:
                     self._zoom_burst(zoom_dir, zoom_dur, zoom_only=True)
                     with self._pose_lock:
                         self.zoom_pos = float(np.clip(zoom_target, 0.0, 1.0))
+                # Autofocus once after lock-on zoom (mirrors _do_zoom).
+                # Fires unconditionally so AF runs even when zoom was skipped (dist<0.02).
+                # _step_track Phase A no longer issues a second trigger.
+                self._autofocus()
             except Exception as e:
                 print(f"[PTZ] center_and_zoom error: {e}")
             finally:
