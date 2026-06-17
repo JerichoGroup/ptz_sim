@@ -3,9 +3,14 @@
 PTZ Sim terminal controller — run over SSH, no display needed.
 
 Usage:
-    python3 ptz_tui.py                    # Jetson mode (connects to 192.168.30.171)
-    python3 ptz_tui.py --host 127.0.0.1   # Host mode
-    python3 ptz_tui.py --host-port 5005 --listen-port 5006
+    # From the Jetson — point --host at the host PC running PTZSim/Isaac Sim:
+    python3 ptz_tui.py --host <HOST_PC_IP>
+
+    # On the host PC itself:
+    python3 ptz_tui.py --host 127.0.0.1
+
+    # 'm' toggles between the --host target ("remote") and 127.0.0.1 ("local").
+    python3 ptz_tui.py --host <HOST_PC_IP> --host-port 5005 --listen-port 5006
 """
 
 import argparse
@@ -71,7 +76,7 @@ def _draw(win, ptz, last_cmd, mode):
         ("h",         "save_home"),
         ("g",         "go_home"),
         ("SPACE",     "stop  (move 0, 0)"),
-        ("m",         f"toggle mode  Jetson ({JETSON_IP}) / Host ({HOST_IP})"),
+        ("m",         "toggle target  remote (--host) / local (127.0.0.1)"),
         ("q",         "quit"),
     ]
     for i, (key, desc) in enumerate(controls):
@@ -85,14 +90,17 @@ def _draw(win, ptz, last_cmd, mode):
 
 # ── Main TUI loop ─────────────────────────────────────────────────────────────
 
-def _tui(stdscr, ptz, host_port):
+def _tui(stdscr, ptz, remote_ip, host_port):
     curses.curs_set(0)
     stdscr.keypad(True)
     stdscr.nodelay(True)
     stdscr.timeout(50)   # 50 ms ≈ 20 Hz, well within cmd_ttl=0.15 s
 
-    # Determine initial mode from the IP that was passed in
-    mode = "Host" if ptz.host_addr[0] == HOST_IP else "Jetson"
+    # Two targets: the remote host passed via --host, and local loopback.
+    # 'm' toggles between them, so the same TUI works on the Jetson (remote)
+    # or on the host PC itself (local).
+    targets = {"remote": remote_ip, "local": HOST_IP}
+    mode = "local" if ptz.host_addr[0] == HOST_IP else "remote"
     last_cmd = "—"
 
     while True:
@@ -107,14 +115,10 @@ def _tui(stdscr, ptz, host_port):
 
         # ── Mode toggle ───────────────────────────────────────────────────────
         elif key == ord('m'):
-            if mode == "Jetson":
-                mode = "Host"
-                new_ip = HOST_IP
-            else:
-                mode = "Jetson"
-                new_ip = JETSON_IP
+            mode = "local" if mode == "remote" else "remote"
+            new_ip = targets[mode]
             ptz.host_addr = (new_ip, host_port)
-            last_cmd = f"mode → {mode}  ({new_ip}:{host_port})"
+            last_cmd = f"target → {mode}  ({new_ip}:{host_port})"
 
         # ── Continuous pan/tilt (hold key → repeated getch → refreshed TTL) ─
         elif key == curses.KEY_LEFT:
@@ -205,7 +209,7 @@ def main():
     )
 
     time.sleep(0.3)
-    curses.wrapper(_tui, ptz, args.host_port)
+    curses.wrapper(_tui, ptz, args.host, args.host_port)
     print("TUI closed.")
 
 
