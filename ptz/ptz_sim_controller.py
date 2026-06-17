@@ -1,24 +1,56 @@
+"""UDP PTZ simulator controller — drop-in replacement for PTZController.
+
+``PTZSimController`` mirrors the public API of
+:class:`dronetracker.ptz.controller.PTZController` but, instead of driving a
+real ONVIF camera, serialises each command to JSON and sends it over UDP to a
+simulator host.  The simulator streams synthetic video over RTSP (point
+``camera.rtsp_main_override`` at it) and sends pose updates back over UDP.
+
+Transport / NAT note
+--------------------
+The Jetson reaches the simulator through a bridge that NAT-masquerades its
+traffic onto a VPN, so the simulator can NEVER initiate a packet back to the
+Jetson — it can only *reply* to the source address of packets it receives.
+Two consequences drive the design here:
+
+* **One socket.** Commands are sent from, and pose is received on, the SAME
+  UDP socket bound to ``listen_port``.  That way the simulator's reply (sent to
+  the source of our commands) traverses the NAT mapping back to this exact
+  socket.  Using a separate send socket would land the reply on the wrong port.
+* **Heartbeat.** A small periodic ``ping`` keeps the NAT mapping open and keeps
+  the simulator's reply address fresh even when the operator isn't sending
+  commands, so pose keeps flowing during idle periods.
+
+Inject an instance into ``LivePtzPipeline(cfg, ptz=...)`` — the pipeline and its
+keyboard wiring call exactly the same methods as for the real controller.
+"""
+
+__all__ = ["PTZSimController"]
+
+import json
 import math
 import socket
 import threading
 import time
-import json
 
 try:
     from dronetracker.ptz.transform import _F_WIDE, _F_TELE, _SENSOR_W
 except ImportError:
-    # Fallback constants matching the UNV IPC6852ER-X45 (45x optical zoom)
-    _F_WIDE = 4.56      # mm, wide-end focal length
-    _F_TELE = 205.2     # mm, tele-end focal length  (~45x)
-    _SENSOR_W = 5.76    # mm, sensor width → FOV_WIDE ≈ 64°
+    # Fallback when norfair (pulled in by transform.py) is unavailable, e.g. a
+    # lightweight test env.  MUST stay identical to dronetracker/ptz/transform.py
+    # so the sim's vel_scale()/FOV math matches the real controller exactly.
+    _F_WIDE = 5.7       # mm, wide-end focal length
+    _F_TELE = 256.5     # mm, tele-end focal length  (~45x)
+    _SENSOR_W = 7.18    # mm, sensor width
 
 _FOV_WIDE = 2 * math.degrees(math.atan(_SENSOR_W / (2 * _F_WIDE)))
 
 
 class PTZSimController:
-    """
-    Jetson-side PTZ simulation controller.
-    Drop-in replacement for PTZController — same public API, UDP transport.
+    """Jetson-side PTZ simulation controller.
+
+    Drop-in replacement for :class:`PTZController` — same public API, UDP
+    transport.
     """
 
     def __init__(
@@ -32,16 +64,15 @@ class PTZSimController:
         zoom_step=0.05,
         cmd_ttl=0.15,
         min_vel_scale=0.30,
+        heartbeat_s=1.5,
     ):
-        # Networking
+        # Networking — ONE socket bound to listen_port, used for both sending
+        # commands and receiving pose (see NAT note in the module docstring).
         self.host_addr = (host_ip, host_port)
+        self.listen_port = listen_port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        # Listener for pose updates
-        self.listen_port = listen_port
-        self.pose = (0.0, 0.0, 0.0, 0.0)
-        threading.Thread(target=self._listen_loop, daemon=True).start()
+        self.sock.bind(("0.0.0.0", listen_port))
 
         # PTZ state (mirrors real controller)
         self.zoom_search_pos = zoom_search_pos
@@ -50,8 +81,11 @@ class PTZSimController:
         self.zoom_step = zoom_step
         self.cmd_ttl = cmd_ttl
         self.min_vel_scale = min_vel_scale
+        self._heartbeat_s = heartbeat_s
 
-        self.zoom_pos = 1.0
+        # Start at the wide end, like the real controller after startup-zoom,
+        # so vel_scale()/_zoom_mag() are correct from the first IDLE frame.
+        self.zoom_pos = zoom_search_pos
         self._zooming = False
         self._rel_moving = False
 
@@ -60,7 +94,13 @@ class PTZSimController:
         self._cmd_t = 0.0
         self._cmd_lock = threading.Lock()
 
-        self.ready = True  # always ready in simulation
+        self.ready = True          # always ready in simulation
+        self.connect_error = None  # never offline; kept for HUD API parity
+
+        # Pose cache (populated by the listener) + background threads.
+        self.pose = (0.0, 0.0, zoom_search_pos, 0.0)
+        threading.Thread(target=self._listen_loop, daemon=True).start()
+        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
 
     # ----------------------------------------------------------------------
     # Networking
@@ -71,12 +111,10 @@ class PTZSimController:
         self.sock.sendto(json.dumps(packet).encode("utf-8"), self.host_addr)
 
     def _listen_loop(self):
-        lsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        lsock.bind(("0.0.0.0", self.listen_port))
+        """Receive pose on the same socket we send commands from."""
         while True:
             try:
-                data, _ = lsock.recvfrom(4096)
+                data, _ = self.sock.recvfrom(4096)
                 msg = json.loads(data.decode("utf-8"))
                 if msg.get("type") == "pose":
                     self.pose = (
@@ -85,8 +123,22 @@ class PTZSimController:
                         msg["zoom"],
                         msg["timestamp"],
                     )
+                    # Sync zoom_pos to simulator truth, mirroring the real
+                    # controller's _poll_pose (otherwise zoom_pos goes stale
+                    # after center_and_zoom, which never updates it locally).
+                    self.zoom_pos = msg["zoom"]
             except Exception:
                 pass
+
+    def _heartbeat_loop(self):
+        """Periodic ping so the NAT mapping stays open and the simulator keeps a
+        fresh reply address even when no commands are being sent."""
+        while True:
+            try:
+                self._send("ping")
+            except Exception:
+                pass
+            time.sleep(self._heartbeat_s)
 
     # ----------------------------------------------------------------------
     # Public API (mirrors real PTZController)

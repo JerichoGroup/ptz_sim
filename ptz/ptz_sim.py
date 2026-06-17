@@ -14,6 +14,14 @@ from isaac_core_dev_kit.udp.one_point_sender import OnePointSender
 import isaac_core_dev_kit.dev_utils as core_utils
 
 
+# Camera lens constants (UNV IPC6852ER-X45-VF) — kept identical to
+# simulation/script_nodes/zoom_node.py so the angular response of relative moves
+# matches the rendered FOV at every zoom level.
+FOCAL_LENGTH_WIDE = 5.7      # mm
+FOCAL_LENGTH_TELE = 256.5    # mm
+HORIZONTAL_APERTURE = 2 * FOCAL_LENGTH_WIDE * math.tan(math.radians(59.5 / 2))  # ≈ 6.504 mm
+
+
 class PTZSim:
     """
     Host-side PTZ simulation controller.
@@ -40,7 +48,13 @@ class PTZSim:
         cmd_ttl=0.15,   # seconds before a coalesced move command goes stale
     ):
         self.listen_port = listen_port
+        # Optional explicit pose target for a directly-routable setup. Default
+        # (jetson_ip=None) → reply-to-sender: the sim cannot initiate to the
+        # Jetson (it sits behind a NAT/VPN bridge; 192.168.55.1 is unreachable
+        # here), so pose is sent back to the source address of received packets.
         self.jetson_addr = (jetson_ip, jetson_port)
+        self._last_cmd_addr = None
+        self._addr_lock = threading.Lock()
 
         # PTZ state — protected by _state_lock for R/M/W operations
         self._pan = 0.0
@@ -74,10 +88,13 @@ class PTZSim:
         self._gimbal_pub = self._gimbal_node.create_publisher(Gimbal, "/isaac_core/gimbal", 10)
         self._zoom_pub   = self._gimbal_node.create_publisher(Float32, "/isaac_core/zoom", 10)
 
-        # Networking
+        # Networking — ONE socket for both receiving commands and sending pose.
+        # Pose MUST go out from this socket (the port the Jetson addressed) so the
+        # reply traverses the bridge's NAT mapping back to the Jetson; a separate
+        # ephemeral socket would not match conntrack and would be dropped.
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("0.0.0.0", listen_port))
-        self.pose_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         # Start threads
         threading.Thread(target=self._recv_loop, daemon=True).start()
@@ -86,7 +103,10 @@ class PTZSim:
         threading.Thread(target=self._zoom_loop, daemon=True).start()
 
         print(f"[Host] PTZSim listening on 0.0.0.0:{listen_port}")
-        print(f"[Host] Jetson pose target: {self.jetson_addr}")
+        if self.jetson_addr[0] is not None:
+            print(f"[Host] Jetson pose target (explicit): {self.jetson_addr}")
+        else:
+            print("[Host] Jetson pose target: reply-to-sender (source of received commands)")
 
         self._isaac_ctx = HostIsaacManager(
             core_path=core_path,
@@ -106,6 +126,10 @@ class PTZSim:
             print("[Host] Isaac Sim started.")
             try:
                 self._init_camera_position()
+                # Auto-capture home at the startup pose (0/0/0), mirroring the
+                # real controller's connect-time home capture — so the Jetson's
+                # automatic go_home (R-key, TRACK→IDLE reset) works from the start.
+                self._save_home()
                 while self._run:
                     time.sleep(1.0)
             except KeyboardInterrupt:
@@ -125,6 +149,10 @@ class PTZSim:
                 data, addr = self.sock.recvfrom(4096)
             except OSError:
                 break
+            # Remember where to reply with pose — on EVERY packet (incl. the
+            # heartbeat ping), before parsing, so the reply address stays fresh.
+            with self._addr_lock:
+                self._last_cmd_addr = addr
             try:
                 msg = json.loads(data.decode("utf-8"))
             except Exception:
@@ -136,8 +164,10 @@ class PTZSim:
     # ------------------------------------------------------------------
 
     def _handle_cmd(self, msg, addr):
-        print(f"[Host] From {addr}: {msg}")
         t = msg.get("type")
+        if t == "ping":
+            return   # heartbeat: only refreshes the reply address (done in _recv_loop)
+        print(f"[Host] From {addr}: {msg}")
 
         if t == "move":
             self._apply_move(msg["vx"], msg["vy"])
@@ -153,8 +183,7 @@ class PTZSim:
         elif t == "go_home":
             self._go_home()
         elif t == "stop_all":
-            print("[Host] stop_all")
-            self._run = False
+            self._stop_motion()
 
     # ------------------------------------------------------------------
     # PTZ motion logic
@@ -167,13 +196,22 @@ class PTZSim:
             self._cmd_t = time.time()
 
     def _apply_relative(self, dp, dt):
-        """One-shot delta move; clears coalescing slot so mover doesn't fight it."""
+        """One-shot delta move in ONVIF TranslationSpaceFov units: dp/dt are
+        fractions of the *current* field of view, where ±1.0 == half the current
+        HFoV of angular motion. Scaling is zoom-dependent (HFoV shrinks as we zoom
+        in), unlike the old constant 45°. Clears the coalescing slot so the mover
+        doesn't fight it."""
         with self._cmd_lock:
             self._cmd_vel = (0.0, 0.0)
             self._cmd_t = 0.0
         with self._state_lock:
-            self._pan  -= float(dp) * 45.0   # ENU: +yaw = CCW = pan left
-            self._tilt -= float(dt) * 45.0   # ENU: +pitch = nose down
+            fl = FOCAL_LENGTH_WIDE + self._zoom * (FOCAL_LENGTH_TELE - FOCAL_LENGTH_WIDE)
+            # HFoV/2 in degrees = degrees(atan(HA / (2·FL)))  (≈29.75° at wide end)
+            half_hfov = math.degrees(math.atan(HORIZONTAL_APERTURE / (2.0 * fl)))
+            # ENU: +yaw = CCW = pan left; +pitch = nose down. Flip the Jetson's
+            # frozen.fov_sign_x / fov_sign_y if a lock-on centers the wrong way.
+            self._pan  -= float(dp) * half_hfov
+            self._tilt -= float(dt) * half_hfov
         self._update_gimbal()
 
     def _apply_zoom(self, target):
@@ -181,6 +219,17 @@ class PTZSim:
         with self._state_lock:
             self._zoom_target = float(max(0.0, min(1.0, target)))
         print(f"[Host] Zoom target → {self._zoom_target:.3f}")
+
+    def _stop_motion(self):
+        """Halt continuous motion. Unlike the old stop_all, this does NOT shut the
+        simulator down — the Jetson sends stop_all on every quit, and the
+        (slow-to-start) Isaac sim should survive Jetson restarts."""
+        with self._cmd_lock:
+            self._cmd_vel = (0.0, 0.0)
+            self._cmd_t = 0.0
+        with self._state_lock:
+            self._zoom_target = self._zoom   # stop slewing toward an old target
+        print("[Host] stop_all → motion halted (sim stays running)")
 
     def _publish_zoom(self):
         """Publish current _zoom value to the /isaac_core/zoom topic."""
@@ -334,7 +383,14 @@ class PTZSim:
 
     def _pose_loop(self):
         while self._run:
+            # Explicit override (directly-routable setup) wins; otherwise reply to
+            # the source of the last received packet (NAT/VPN case — the default).
             if self.jetson_addr[0] is not None:
+                addr = self.jetson_addr
+            else:
+                with self._addr_lock:
+                    addr = self._last_cmd_addr
+            if addr is not None:
                 packet = {
                     "type": "pose",
                     "pan": self._pan,
@@ -343,9 +399,11 @@ class PTZSim:
                     "timestamp": time.time(),
                 }
                 try:
-                    self.pose_sock.sendto(
+                    # Send from the command socket so the reply matches the NAT
+                    # conntrack entry and reaches the Jetson.
+                    self.sock.sendto(
                         json.dumps(packet).encode("utf-8"),
-                        self.jetson_addr,
+                        addr,
                     )
                 except Exception:
                     pass
@@ -357,11 +415,17 @@ class PTZSim:
 # ----------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import os
+
     CORE_PATH = "/home/ofer/clones/ptz_sim"
     USD_PATH = "./usd/maps/earth/earth.usda"
 
-    JETSON_IP = "192.168.55.1"
-    JETSON_PORT = 5006
+    # Pose is returned by reply-to-sender by default: the Jetson sits behind a
+    # NAT/VPN bridge and its 192.168.55.1 is unreachable from here, so we reply to
+    # the source address of received commands. Set PTZ_JETSON_IP only for a
+    # directly-routable test setup where an explicit pose target is wanted.
+    JETSON_IP = os.environ.get("PTZ_JETSON_IP")            # None → reply-to-sender
+    JETSON_PORT = int(os.environ.get("PTZ_JETSON_PORT", "5006"))
 
     sim = PTZSim(
         listen_port=5005,
