@@ -89,11 +89,13 @@ class PTZSim:
         self._run = True
         self._slewing_home = False
 
-        # Scene playback — the scene NUMBER comes from the Jetson (config sim.scene,
-        # carried on the command channel); the START DELAY is configured here.
+        # Scene playback — the scene NUMBER and a per-Jetson-session token come
+        # from the command channel; the START DELAY is configured here. The scene
+        # is (re)played once per NEW session, so quitting the Jetson, changing
+        # sim.scene, and re-running replays the scene.
         self._scene_start_delay_s = scene_start_delay_s
         self._requested_scene = None   # set from received packets; None = not told yet
-        self._scene_ran = False        # one-shot guard
+        self._session_id = None        # latest Jetson session token (from the heartbeat)
 
         # Isaac/ROS setup — must happen before threads start so _update_gimbal is safe
         core_utils.delete_cesium_cache()
@@ -176,11 +178,14 @@ class PTZSim:
             # The Jetson carries the requested scene on the command channel
             # (typically on the heartbeat ping). Capture it from any packet that
             # has it, before the ping early-return in _handle_cmd.
-            if isinstance(msg, dict) and msg.get("scene") is not None:
-                try:
-                    self._requested_scene = int(msg["scene"])
-                except (TypeError, ValueError):
-                    pass   # ignore a malformed scene value; don't kill the recv loop
+            if isinstance(msg, dict):
+                if msg.get("scene") is not None:
+                    try:
+                        self._requested_scene = int(msg["scene"])
+                    except (TypeError, ValueError):
+                        pass   # ignore a malformed scene value; don't kill the recv loop
+                if msg.get("session") is not None:
+                    self._session_id = msg["session"]
             self._handle_cmd(msg, addr)
 
     # ------------------------------------------------------------------
@@ -406,29 +411,38 @@ class PTZSim:
     # ------------------------------------------------------------------
 
     def _scene_loop(self):
-        """Play the Jetson-requested scene once, a configurable delay after Isaac
-        has loaded. The scene NUMBER arrives over the command channel (sim.scene),
-        the START DELAY is set on this side (scene_start_delay_s)."""
-        t0 = time.time()
-        # Minimum settle after Isaac load before the target starts moving.
-        while self._run and time.time() - t0 < self._scene_start_delay_s:
-            time.sleep(0.2)
-        # Wait until the Jetson has actually told us which scene to play.
-        while self._run and self._requested_scene is None:
-            time.sleep(0.2)
-        if not self._run or self._scene_ran:
-            return
-        self._scene_ran = True
-        scene = self._requested_scene
-        if not scene:   # 0 (or falsy) → scene playback disabled
-            print("[Host] scene playback disabled (sim.scene=0)")
-            return
-        print(f"[Host] starting scene {scene} "
-              f"({self._scene_start_delay_s:.0f}s after Isaac load)")
-        try:
-            run_scene(scene)
-        except Exception as e:
-            print(f"[Host] scene {scene} error: {e}")
+        """Play the Jetson-requested scene once per NEW session.
+
+        Started right after Isaac loads, so the first scene runs ~scene_start_delay_s
+        after load. Each new Jetson session (new sim_motion launch → new session
+        token) re-arms playback, so quit → change sim.scene → re-run replays it.
+        The delay before each play lets the (re)launched pipeline warm up first.
+        """
+        last_played_session = None
+        while self._run:
+            session = self._session_id
+            if session is None or session == last_played_session:
+                time.sleep(0.2)
+                continue
+
+            # New session detected — arm playback for it after a settle delay.
+            last_played_session = session
+            t_arm = time.time()
+            while self._run and time.time() - t_arm < self._scene_start_delay_s:
+                time.sleep(0.2)
+            if not self._run:
+                return
+
+            scene = self._requested_scene
+            if not scene:   # 0 (or None) → scene playback disabled for this session
+                print(f"[Host] session {session}: scene playback disabled (sim.scene=0)")
+                continue
+            print(f"[Host] starting scene {scene} for session {session} "
+                  f"({self._scene_start_delay_s:.0f}s settle)")
+            try:
+                run_scene(scene)   # blocking; finite trajectory
+            except Exception as e:
+                print(f"[Host] scene {scene} error: {e}")
 
     # ------------------------------------------------------------------
     # Pose updates back to Jetson
