@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (-11.680102767995574, -0.8545974341416717, 11.34438833598792)
-                double3 target = (-0.46095087096179554, -0.034818311220992215, 1.2804768247715455)
+                double3 position = (-19.537144675348042, 0.02877626403976663, 13.908428149212043)
+                double3 target = (-7.3777847443727484, -0.8616226518259166, 5.055699559750462)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -86,6 +86,7 @@ def Xform "Environment"
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
     def DomeLight "DomeLight" (
+        delete apiSchemas = ["OmniScriptingAPI"]
         prepend apiSchemas = ["ShapingAPI"]
     )
     {
@@ -97,10 +98,12 @@ def Xform "Environment"
         asset inputs:shaping:ies:file
         asset inputs:texture:file = @./usd/assets/sunflowers_puresky_4k.exr@
         token inputs:texture:format = "latlong"
+        token visibility = "inherited"
         quatd xformOp:orient = (1, 0, 0, 0)
+        double3 xformOp:rotateXYZ = (0, 0, 0)
         double3 xformOp:scale = (1, 1, 1)
         double3 xformOp:translate = (0, 0, 0)
-        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateXYZ"]
     }
 }
 
@@ -270,9 +273,9 @@ def Xform "bboxes" (
         double cesium:anchor:latitude = 32.22480999999999
         double cesium:anchor:longitude = 35.25621
         double3 cesium:anchor:position = (4410542.061819228, 3117779.8066218565, 3381821.901378448)
-        double3 xformOp:rotateXYZ = (-6.36110936292703e-15, -0, 3.1805546814635168e-15)
-        double3 xformOp:scale = (1, 1.0000000000000004, 1.0000000000000009)
-        double3 xformOp:translate = (-4.656612873077393e-10, 0, 1.862645149230957e-9)
+        double3 xformOp:rotateXYZ = (-6.36110936292703e-15, -4.876562723043536e-15, 5.871183753757845e-15)
+        double3 xformOp:scale = (1, 1.0000000000000007, 1.000000000000001)
+        double3 xformOp:translate = (0, 0, 0)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 
         over "Combat_FPV_Drone_Kamikaze"
@@ -793,6 +796,138 @@ def compute(db: og.Database):
         custom bool state:omni_initialized
         uniform token ui:nodegraph:node:expansionState = "open"
         uniform float2 ui:nodegraph:node:pos = (175.46771, 306.1258)
+    }
+}
+
+def OmniGraph "moving_sky"
+{
+    token evaluationMode = "Automatic"
+    token evaluator:type = "execution"
+    token fabricCacheBacking = "Shared"
+    int2 fileFormatVersion = (1, 7)
+    custom vector3f graph:variable:ort (
+        customData = {
+            token scope = "private"
+        }
+        displayName = "ort"
+    )
+    token pipelineStage = "pipelineStageSimulation"
+
+    def OmniGraphNode "on_playback_tick" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        token node:type = "omni.graph.action.OnPlaybackTick"
+        int node:typeVersion = 1
+        custom double outputs:deltaSeconds
+        custom double outputs:frame
+        custom uint outputs:tick (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom double outputs:time
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (3, 8)
+    }
+
+    def OmniGraphNode "write_prim_attribute" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </moving_sky/script_node.outputs:execOut>
+        custom token inputs:name = "xformOp:rotateXYZ"
+        custom rel inputs:prim = </Environment/DomeLight> (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        string relType = "target"
+                    }
+                }
+            }
+        )
+        custom token inputs:primPath = "/Environment/DomeLight"
+        custom bool inputs:usdWriteBack
+        custom bool inputs:usePath = 1
+        custom token inputs:value (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        double3 attrValue = (0, 0, 0)
+                        string resolvedType = "double[3]"
+                    }
+                }
+            }
+        )
+        prepend token inputs:value.connect = </moving_sky/script_node.outputs:rot>
+        token node:type = "omni.graph.nodes.WritePrimAttribute"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom bool state:correctlySetup
+        custom uint64 state:destAttrib
+        custom uint64 state:destPath
+        custom uint64 state:destPathToken
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (556.5561, 4.840617)
+    }
+
+    def OmniGraphNode "script_node" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </moving_sky/on_playback_tick.outputs:tick>
+        custom string inputs:script = """# This script is executed the first time the script node computes, or the next time
+# it computes after this script is modified or the 'Reset' button is pressed.
+#
+# The following callback functions may be defined in this script:
+#     setup(db): Called immediately after this script is executed
+#     compute(db): Called every time the node computes (should always be defined)
+#     cleanup(db): Called when the node is deleted or the reset button is pressed
+# Available variables:
+#    db: og.Database The node interface, attributes are exposed like db.inputs.foo
+#                    Use db.log_error, db.log_warning to report problems.
+#    og: The omni.graph.core module
+
+
+def setup(db: og.Database):
+    global angle, counter
+    angle = 0.0
+    counter = 0
+
+def cleanup(db: og.Database):
+    pass
+
+def compute(db: og.Database):
+    global angle, counter
+    N = 10          # ticks per step — raise to slow down
+    STEP = 0.01     # degrees per step
+
+    counter += 1
+    if counter >= N:
+        counter = 0
+        angle = (angle + STEP) % 360.0   # 360 wraps to 0 seamlessly
+
+    db.outputs.rot = [0.0, 0.0, angle]
+    return True"""
+        custom token inputs:scriptPath
+        custom bool inputs:usePath
+        token node:type = "omni.graph.scriptnode.ScriptNode"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom double3 outputs:rot
+        custom bool state:omni_initialized
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (308.9995, 34.38347)
     }
 }
 
