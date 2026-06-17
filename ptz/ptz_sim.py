@@ -13,6 +13,13 @@ from isaac_core_dev_kit.isaac_manager.host_isaac_manager import HostIsaacManager
 from isaac_core_dev_kit.udp.one_point_sender import OnePointSender
 import isaac_core_dev_kit.dev_utils as core_utils
 
+# Scene library (sibling module). Run as `python3 ./ptz/ptz_sim.py` puts ptz/ on
+# sys.path[0]; fall back to the package path if imported differently.
+try:
+    from scenes import run_scene
+except ImportError:
+    from ptz.scenes import run_scene
+
 
 # Camera lens constants (UNV IPC6852ER-X45-VF) — kept identical to
 # simulation/script_nodes/zoom_node.py so the angular response of relative moves
@@ -46,6 +53,7 @@ class PTZSim:
         pan_vel=60.0,   # deg/s at vx=1.0
         tilt_vel=60.0,  # deg/s at vy=1.0
         cmd_ttl=0.15,   # seconds before a coalesced move command goes stale
+        scene_start_delay_s=20.0,  # wait this long after Isaac loads before playing the scene
     ):
         self.listen_port = listen_port
         # Optional explicit pose target for a directly-routable setup. Default
@@ -80,6 +88,12 @@ class PTZSim:
         # Control flags
         self._run = True
         self._slewing_home = False
+
+        # Scene playback — the scene NUMBER comes from the Jetson (config sim.scene,
+        # carried on the command channel); the START DELAY is configured here.
+        self._scene_start_delay_s = scene_start_delay_s
+        self._requested_scene = None   # set from received packets; None = not told yet
+        self._scene_ran = False        # one-shot guard
 
         # Isaac/ROS setup — must happen before threads start so _update_gimbal is safe
         core_utils.delete_cesium_cache()
@@ -130,6 +144,8 @@ class PTZSim:
                 # real controller's connect-time home capture — so the Jetson's
                 # automatic go_home (R-key, TRACK→IDLE reset) works from the start.
                 self._save_home()
+                # Isaac is loaded now → start the scene-playback timer.
+                threading.Thread(target=self._scene_loop, daemon=True).start()
                 while self._run:
                     time.sleep(1.0)
             except KeyboardInterrupt:
@@ -157,6 +173,14 @@ class PTZSim:
                 msg = json.loads(data.decode("utf-8"))
             except Exception:
                 continue
+            # The Jetson carries the requested scene on the command channel
+            # (typically on the heartbeat ping). Capture it from any packet that
+            # has it, before the ping early-return in _handle_cmd.
+            if isinstance(msg, dict) and msg.get("scene") is not None:
+                try:
+                    self._requested_scene = int(msg["scene"])
+                except (TypeError, ValueError):
+                    pass   # ignore a malformed scene value; don't kill the recv loop
             self._handle_cmd(msg, addr)
 
     # ------------------------------------------------------------------
@@ -378,6 +402,35 @@ class PTZSim:
         sender.close()
 
     # ------------------------------------------------------------------
+    # Scene playback
+    # ------------------------------------------------------------------
+
+    def _scene_loop(self):
+        """Play the Jetson-requested scene once, a configurable delay after Isaac
+        has loaded. The scene NUMBER arrives over the command channel (sim.scene),
+        the START DELAY is set on this side (scene_start_delay_s)."""
+        t0 = time.time()
+        # Minimum settle after Isaac load before the target starts moving.
+        while self._run and time.time() - t0 < self._scene_start_delay_s:
+            time.sleep(0.2)
+        # Wait until the Jetson has actually told us which scene to play.
+        while self._run and self._requested_scene is None:
+            time.sleep(0.2)
+        if not self._run or self._scene_ran:
+            return
+        self._scene_ran = True
+        scene = self._requested_scene
+        if not scene:   # 0 (or falsy) → scene playback disabled
+            print("[Host] scene playback disabled (sim.scene=0)")
+            return
+        print(f"[Host] starting scene {scene} "
+              f"({self._scene_start_delay_s:.0f}s after Isaac load)")
+        try:
+            run_scene(scene)
+        except Exception as e:
+            print(f"[Host] scene {scene} error: {e}")
+
+    # ------------------------------------------------------------------
     # Pose updates back to Jetson
     # ------------------------------------------------------------------
 
@@ -427,6 +480,10 @@ if __name__ == "__main__":
     JETSON_IP = os.environ.get("PTZ_JETSON_IP")            # None → reply-to-sender
     JETSON_PORT = int(os.environ.get("PTZ_JETSON_PORT", "5006"))
 
+    # Seconds to wait after Isaac finishes loading before playing the scene the
+    # Jetson requested. Override with PTZ_SCENE_DELAY_S.
+    SCENE_START_DELAY_S = float(os.environ.get("PTZ_SCENE_DELAY_S", "20.0"))
+
     sim = PTZSim(
         listen_port=5005,
         jetson_ip=JETSON_IP,
@@ -435,5 +492,6 @@ if __name__ == "__main__":
         usd_path=USD_PATH,
         show_isaac_logs=False,
         image_rtp=True,
+        scene_start_delay_s=SCENE_START_DELAY_S,
     )
     sim.run()
