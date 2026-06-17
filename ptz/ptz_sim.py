@@ -369,7 +369,7 @@ if __name__ == "__main__":
         jetson_port=JETSON_PORT,
         core_path=CORE_PATH,
         usd_path=USD_PATH,
-        show_isaac_logs=True,
+        show_isaac_logs=False,
         image_rtp=True,
     )
     sim.run()
