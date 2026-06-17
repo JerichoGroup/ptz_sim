@@ -370,8 +370,8 @@ class PTZSim:
     def _init_camera_position(self):
         # Send at 30 Hz for 3 s so the packet lands regardless of when Isaac Sim's
         # UDP receiver finishes initialising after the HostIsaacManager ready signal.
-        sender = OnePointSender(lat=32.19965, lon=35.30593, alt=620.0,
-                                roll=0.0, pitch=0.0, yaw=0.0)
+        sender = OnePointSender(lat=32.20647, lon=35.29034, alt=540.0,
+                                roll=0.0, pitch=0.0, yaw=90.0)
         sender.run(blocking=False)
         time.sleep(3.0)
         sender.stop()

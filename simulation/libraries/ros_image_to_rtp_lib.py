@@ -16,10 +16,11 @@ NOTE: binding port 554 requires root or CAP_NET_BIND_SERVICE on Linux.
 """
 
 import math
+import os
 import random
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import rclpy
 from rclpy.node import Node
@@ -54,6 +55,60 @@ except Exception as _cv_err:                              # pragma: no cover
     print(f"[FrameEffects] numpy/cv2 unavailable ({_cv_err}); effects disabled")
 
 
+# Sprite images live in <repo>/pics; resolve relative so it works on any host.
+_PICS_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "pics"))
+
+
+def _pics(*names):
+    return [os.path.join(_PICS_DIR, n) for n in names]
+
+
+@dataclass
+class SpriteKind:
+    """One family of drifting objects (e.g. flies, birds).
+
+    A random image from `images` is chosen per spawn and scaled (aspect-ratio
+    preserved) so its LONGER side equals a random value in [size_min, size_max].
+    `count` is the max on screen at once; `gap_*` idle frames between a given
+    slot's appearances make the on-screen count fluctuate down to 0 — bigger
+    gaps ⇒ rarer ⇒ lower "rate".
+    """
+    name:      str
+    images:    list                       # PNG paths (alpha respected); [] → gray squares
+    count:     int   = 1                  # max simultaneously on screen
+    size_min:  int   = 6                  # longer-side length in px
+    size_max:  int   = 20
+    speed_min: float = 4.0                # px/frame
+    speed_max: float = 40.0
+    life_min:  int   = 25                 # frames present before it leaves
+    life_max:  int   = 120
+    gap_min:   int   = 20                 # frames absent before reappearing
+    gap_max:   int   = 160
+    alpha:     float = 0.9                # 0..1 opacity multiplier
+    jitter:    float = 0.6                # per-frame velocity wander
+    gray:      int   = 25                 # fallback square shade if images missing
+
+
+def _default_kinds():
+    return [
+        # Flies: small, fast, frequent (0–2 on screen).
+        SpriteKind(
+            name="fly", images=_pics("fly1.png", "fly2.png", "fly3.png"),
+            count=2, size_min=3, size_max=14,
+            speed_min=10.0, speed_max=70.0,
+            life_min=25, life_max=120, gap_min=8, gap_max=70,
+            alpha=0.85, jitter=0.9),
+        # Birds: bigger, slower, rarer (0–1, ~half the fly rate).
+        SpriteKind(
+            name="bird", images=_pics("bird1.png", "bird2.png", "bird3.png", "bird4.png"),
+            count=1, size_min=22, size_max=60,
+            speed_min=2.0, speed_max=12.0,
+            life_min=70, life_max=240, gap_min=90, gap_max=260,
+            alpha=0.92, jitter=0.35),
+    ]
+
+
 @dataclass
 class FrameEffectsConfig:
     """Edit the EFFECTS instance below to configure blur and noise."""
@@ -68,30 +123,16 @@ class FrameEffectsConfig:
     zoom_topic:      str   = "/isaac_core/zoom"
     zoom_epsilon:    float = 1e-4   # min zoom delta counted as "a zoom happened"
 
-    # ---- sensor noise (drifting specks) ----
-    # noise_count is the MAX specks at once; respawn gaps make them come and go,
-    # so the on-screen count fluctuates between 0 and noise_count.
+    # ---- sensor noise (drifting sprites: flies, birds, …) ----
     noise_enabled:   bool  = True
-    noise_count:     int   = 2      # max specks on screen at once (typically 0–2)
-    noise_size_min:  int   = 1      # speck side length (px) — wide range = varied sizes
-    noise_size_max:  int   = 16
-    noise_speed_min: float = 1.0    # px/frame drift speed — wide range = varied speeds
-    noise_speed_max: float = 20.0
-    noise_gray_min:  int   = 0      # speck darkness (0 = black)
-    noise_gray_max:  int   = 70
-    noise_alpha:     float = 0.65   # 0..1 opacity over the frame
-    noise_jitter:    float = 0.6    # per-frame velocity wander → organic motion
-    noise_life_min:  int   = 25     # frames a speck stays before it leaves
-    noise_life_max:  int   = 120
-    noise_gap_min:   int   = 20     # frames a speck stays GONE before reappearing
-    noise_gap_max:   int   = 160
+    kinds:           list  = field(default_factory=_default_kinds)
 
 
 EFFECTS = FrameEffectsConfig()      # ←—— configure blur / noise here
 
 
 class FrameEffects:
-    """Applies zoom-refocus blur and drifting-speck noise to raw frame bytes.
+    """Applies zoom-refocus blur and drifting-sprite noise to raw frame bytes.
 
     All methods run on the single ROS spin thread (the image and zoom callbacks
     are serialised by rclpy's single-threaded executor), so no locking is needed.
@@ -106,8 +147,9 @@ class FrameEffects:
         self._zoom_last_val = None
         self._blur_t0 = None          # monotonic start of the current blur envelope
         self._zoom_last_t = 0.0       # monotonic time of the last zoom change
-        # noise state
-        self._particles = []
+        # noise state — one entry per kind: {"cfg", "bases":[(color,alpha)], "particles":[]}
+        self._kind_states = []
+        self._sprites_loaded = False
         self._noise_dims = None       # (w, h) the particles were seeded for
 
     # ---- zoom signal → arms the blur envelope ----
@@ -145,73 +187,143 @@ class FrameEffects:
         a = a * a * (3.0 - 2.0 * a)                          # smoothstep (soft)
         return a * self.cfg.max_blur * self.cfg.blur_max_sigma
 
+    # ---- sprite images (loaded once, in the frame's channel order) ----
+    def _load_sprites(self, order: str) -> None:
+        if self._sprites_loaded:
+            return
+        self._sprites_loaded = True
+        self._kind_states = []
+        for k in self.cfg.kinds:
+            bases = []
+            for path in k.images:
+                try:
+                    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+                    if img is None:
+                        raise RuntimeError("imread returned None")
+                    if img.ndim == 3 and img.shape[2] == 4:
+                        color = img[:, :, :3].astype(np.float32)
+                        alpha = img[:, :, 3].astype(np.float32) / 255.0
+                    elif img.ndim == 3:
+                        color = img[:, :, :3].astype(np.float32)
+                        alpha = np.ones(img.shape[:2], np.float32)
+                    else:  # grayscale source
+                        color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR).astype(np.float32)
+                        alpha = np.ones(img.shape[:2], np.float32)
+                    if order == "rgb":              # cv2 loads BGR; match the frame
+                        color = color[:, :, ::-1].copy()
+                    bases.append((color, alpha))
+                except Exception as e:
+                    print(f"[FrameEffects] {k.name}: could not load {path} ({e})")
+            if not bases:
+                print(f"[FrameEffects] {k.name}: no images → gray-square fallback")
+            self._kind_states.append({"cfg": k, "bases": bases, "particles": []})
+        print("[FrameEffects] sprites: " + ", ".join(
+            f"{ks['cfg'].name}×{len(ks['bases'])}" for ks in self._kind_states))
+
+    def _make_sprite(self, color, alpha, size, alpha_mul):
+        """Scale a base image so its longer side == `size` (aspect preserved),
+        random horizontal flip for heading variety. Returns (color, alpha)."""
+        h0, w0 = alpha.shape[:2]
+        scale = size / float(max(h0, w0))
+        nw = max(1, int(round(w0 * scale)))
+        nh = max(1, int(round(h0 * scale)))
+        spr = cv2.resize(color, (nw, nh), interpolation=cv2.INTER_AREA)
+        sa = cv2.resize(alpha, (nw, nh), interpolation=cv2.INTER_AREA)
+        if random.random() < 0.5:                   # flip L/R only (vertical looks wrong)
+            spr = cv2.flip(spr, 1)
+            sa = cv2.flip(sa, 1)
+        return spr, sa * alpha_mul
+
     # ---- noise particles ----
-    def _spawn(self, w, h):
-        """A freshly-active speck (wait=0 → drawn immediately)."""
-        c = self.cfg
-        speed = random.uniform(c.noise_speed_min, c.noise_speed_max)
+    def _spawn(self, ks, w, h):
+        """A freshly-active sprite of kind `ks` (wait=0 → drawn immediately)."""
+        k = ks["cfg"]
+        speed = random.uniform(k.speed_min, k.speed_max)
         ang = random.uniform(0.0, 2.0 * math.pi)
+        size = random.randint(k.size_min, k.size_max)
+        if ks["bases"]:
+            color, alpha = random.choice(ks["bases"])
+            spr, sa = self._make_sprite(color, alpha, size, k.alpha)
+            sw, sh = spr.shape[1], spr.shape[0]
+        else:
+            spr = sa = None
+            sw = sh = size
         return {
             "x": random.uniform(0, w), "y": random.uniform(0, h),
             "vx": speed * math.cos(ang), "vy": speed * math.sin(ang),
-            "sz": random.randint(c.noise_size_min, c.noise_size_max),
-            "gray": random.randint(c.noise_gray_min, c.noise_gray_max),
-            "life": random.randint(c.noise_life_min, c.noise_life_max),
-            "wait": 0,
+            "sw": sw, "sh": sh, "gray": k.gray,
+            "life": random.randint(k.life_min, k.life_max),
+            "wait": 0, "sprite": spr, "salpha": sa,
         }
 
     def _ensure_particles(self, w, h):
-        if self._noise_dims != (w, h):
-            self._particles = []
-            for _ in range(self.cfg.noise_count):
-                p = self._spawn(w, h)
-                # Stagger the start so they don't all appear together — random
-                # initial gap means the scene often begins with 0–1 visible.
-                p["wait"] = random.randint(0, self.cfg.noise_gap_max)
-                self._particles.append(p)
-            self._noise_dims = (w, h)
+        if self._noise_dims == (w, h):
+            return
+        for ks in self._kind_states:
+            k = ks["cfg"]
+            parts = []
+            for _ in range(k.count):
+                p = self._spawn(ks, w, h)
+                # Stagger starts with a random initial gap so they don't all
+                # appear together (scene often begins with 0–1 visible).
+                p["wait"] = random.randint(0, k.gap_max)
+                parts.append(p)
+            ks["particles"] = parts
+        self._noise_dims = (w, h)
 
-    def _draw_noise(self, frame, w, h):
-        c = self.cfg
-        a = c.noise_alpha
-        lo, hi = c.noise_speed_min, c.noise_speed_max
-        for p in self._particles:
-            # Inactive (between appearances): count down, then respawn elsewhere.
-            if p["wait"] > 0:
-                p["wait"] -= 1
-                if p["wait"] == 0:
-                    p.update(self._spawn(w, h))
-                continue
-            # drift with a small velocity wander for organic, fly-like motion
-            p["vx"] += random.uniform(-c.noise_jitter, c.noise_jitter)
-            p["vy"] += random.uniform(-c.noise_jitter, c.noise_jitter)
-            sp = math.hypot(p["vx"], p["vy"]) or 1.0
-            if sp > hi:
-                p["vx"] *= hi / sp; p["vy"] *= hi / sp
-            elif sp < lo:
-                p["vx"] *= lo / sp; p["vy"] *= lo / sp
-            p["x"] += p["vx"]; p["y"] += p["vy"]; p["life"] -= 1
-            # when it ages out or drifts off-frame, go idle for a random gap
-            m = p["sz"] + 2
-            if (p["life"] <= 0 or p["x"] < -m or p["x"] > w + m
-                    or p["y"] < -m or p["y"] > h + m):
-                p["wait"] = random.randint(c.noise_gap_min, c.noise_gap_max)
-                continue
-            x0 = max(0, int(p["x"])); y0 = max(0, int(p["y"]))
-            x1 = min(w, x0 + p["sz"]); y1 = min(h, y0 + p["sz"])
-            if x1 <= x0 or y1 <= y0:
-                continue
-            roi = frame[y0:y1, x0:x1]
-            roi[:] = (roi * (1.0 - a) + p["gray"] * a).astype(np.uint8)
+    def _draw_noise(self, frame, w, h, ch):
+        for ks in self._kind_states:
+            k = ks["cfg"]
+            lo, hi = k.speed_min, k.speed_max
+            for p in ks["particles"]:
+                # Inactive (between appearances): count down, then respawn.
+                if p["wait"] > 0:
+                    p["wait"] -= 1
+                    if p["wait"] == 0:
+                        p.update(self._spawn(ks, w, h))
+                    continue
+                # drift with a small velocity wander for organic motion
+                p["vx"] += random.uniform(-k.jitter, k.jitter)
+                p["vy"] += random.uniform(-k.jitter, k.jitter)
+                sp = math.hypot(p["vx"], p["vy"]) or 1.0
+                if sp > hi:
+                    p["vx"] *= hi / sp; p["vy"] *= hi / sp
+                elif sp < lo:
+                    p["vx"] *= lo / sp; p["vy"] *= lo / sp
+                p["x"] += p["vx"]; p["y"] += p["vy"]; p["life"] -= 1
+                # when it ages out or drifts off-frame, go idle for a random gap
+                sw, sh = p["sw"], p["sh"]
+                m = max(sw, sh) + 2
+                if (p["life"] <= 0 or p["x"] < -m or p["x"] > w + m
+                        or p["y"] < -m or p["y"] > h + m):
+                    p["wait"] = random.randint(k.gap_min, k.gap_max)
+                    continue
+                # visible rect on the frame, and matching sub-rect of the sprite
+                px = int(p["x"]); py = int(p["y"])
+                x0 = max(0, px); y0 = max(0, py)
+                x1 = min(w, px + sw); y1 = min(h, py + sh)
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                sprite = p["sprite"]
+                if sprite is not None and ch >= 3:
+                    sx0 = x0 - px; sy0 = y0 - py
+                    spr = sprite[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+                    al = p["salpha"][sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)][..., None]
+                    roi = frame[y0:y1, x0:x1, :3]
+                    roi[:] = (roi * (1.0 - al) + spr * al).astype(np.uint8)
+                else:
+                    a = k.alpha
+                    roi = frame[y0:y1, x0:x1]
+                    roi[:] = (roi * (1.0 - a) + p["gray"] * a).astype(np.uint8)
 
     # ---- main entry: returns possibly-modified raw frame bytes ----
-    def process(self, raw: bytes, w: int, h: int, c: int) -> bytes:
+    def process(self, raw: bytes, w: int, h: int, c: int, encoding: str) -> bytes:
         if not self.enabled:
             return raw
         cfg = self.cfg
         sigma = self._blur_sigma(time.monotonic()) if cfg.blur_enabled else 0.0
         do_blur = sigma > 0.3
-        do_noise = cfg.noise_enabled and cfg.noise_count > 0
+        do_noise = cfg.noise_enabled and any(k.count > 0 for k in cfg.kinds)
         if not do_blur and not do_noise:
             return raw                       # fast path: nothing to do this frame
         try:
@@ -220,8 +332,10 @@ class FrameEffects:
             arr = np.frombuffer(raw, np.uint8).reshape(h, w, c)
             frame = cv2.GaussianBlur(arr, (0, 0), sigma) if do_blur else arr.copy()
             if do_noise:
+                order = "rgb" if encoding in ("rgb8", "rgba8") else "bgr"
+                self._load_sprites(order)
                 self._ensure_particles(w, h)
-                self._draw_noise(frame, w, h)
+                self._draw_noise(frame, w, h, c)
             return frame.tobytes()
         except Exception as e:
             print(f"[FrameEffects] process failed, passing frame through: {e}")
@@ -374,7 +488,7 @@ class GstRTSPBridge:
         # Apply blur/noise realism before encoding (no-op when nothing is active).
         channels = self._CHANNELS.get(msg.encoding)
         if channels is not None:
-            raw = self.effects.process(raw, msg.width, msg.height, channels)
+            raw = self.effects.process(raw, msg.width, msg.height, channels, msg.encoding)
 
         caps_str = caps.to_string()
         if caps_str != self._last_caps_str:
