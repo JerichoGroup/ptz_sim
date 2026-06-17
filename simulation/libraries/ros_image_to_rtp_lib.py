@@ -61,26 +61,30 @@ class FrameEffectsConfig:
     # ---- zoom-refocus blur ----
     blur_enabled:    bool  = True
     max_blur:        float = 1.0    # 0..1 overall blur strength (scales blur_max_sigma)
-    blur_time:       float = 1.5    # s: total refocus settle window after a zoom
-    blur_peak_frac:  float = 0.4    # fraction of blur_time where blur peaks (≈0.6 s)
+    blur_time:       float = 2.0    # s: total refocus settle window after a zoom
+    blur_peak_frac:  float = 0.4    # fraction of blur_time where blur peaks (≈0.8 s)
     blur_max_sigma:  float = 9.0    # Gaussian sigma (px) at full intensity; ↑ = blurrier
     blur_rearm_gap:  float = 0.3    # s gap between zoom changes that starts a NEW blur
     zoom_topic:      str   = "/isaac_core/zoom"
     zoom_epsilon:    float = 1e-4   # min zoom delta counted as "a zoom happened"
 
     # ---- sensor noise (drifting specks) ----
+    # noise_count is the MAX specks at once; respawn gaps make them come and go,
+    # so the on-screen count fluctuates between 0 and noise_count.
     noise_enabled:   bool  = True
-    noise_count:     int   = 7      # specks on screen at once
-    noise_size_min:  int   = 2      # speck side length (px)
-    noise_size_max:  int   = 9
-    noise_speed_min: float = 2.0    # px/frame drift speed
-    noise_speed_max: float = 11.0
+    noise_count:     int   = 2      # max specks on screen at once (typically 0–2)
+    noise_size_min:  int   = 1      # speck side length (px) — wide range = varied sizes
+    noise_size_max:  int   = 16
+    noise_speed_min: float = 1.0    # px/frame drift speed — wide range = varied speeds
+    noise_speed_max: float = 20.0
     noise_gray_min:  int   = 0      # speck darkness (0 = black)
     noise_gray_max:  int   = 70
     noise_alpha:     float = 0.65   # 0..1 opacity over the frame
     noise_jitter:    float = 0.6    # per-frame velocity wander → organic motion
-    noise_life_min:  int   = 25     # frames a speck lives before respawning elsewhere
+    noise_life_min:  int   = 25     # frames a speck stays before it leaves
     noise_life_max:  int   = 120
+    noise_gap_min:   int   = 20     # frames a speck stays GONE before reappearing
+    noise_gap_max:   int   = 160
 
 
 EFFECTS = FrameEffectsConfig()      # ←—— configure blur / noise here
@@ -143,6 +147,7 @@ class FrameEffects:
 
     # ---- noise particles ----
     def _spawn(self, w, h):
+        """A freshly-active speck (wait=0 → drawn immediately)."""
         c = self.cfg
         speed = random.uniform(c.noise_speed_min, c.noise_speed_max)
         ang = random.uniform(0.0, 2.0 * math.pi)
@@ -152,11 +157,18 @@ class FrameEffects:
             "sz": random.randint(c.noise_size_min, c.noise_size_max),
             "gray": random.randint(c.noise_gray_min, c.noise_gray_max),
             "life": random.randint(c.noise_life_min, c.noise_life_max),
+            "wait": 0,
         }
 
     def _ensure_particles(self, w, h):
         if self._noise_dims != (w, h):
-            self._particles = [self._spawn(w, h) for _ in range(self.cfg.noise_count)]
+            self._particles = []
+            for _ in range(self.cfg.noise_count):
+                p = self._spawn(w, h)
+                # Stagger the start so they don't all appear together — random
+                # initial gap means the scene often begins with 0–1 visible.
+                p["wait"] = random.randint(0, self.cfg.noise_gap_max)
+                self._particles.append(p)
             self._noise_dims = (w, h)
 
     def _draw_noise(self, frame, w, h):
@@ -164,6 +176,12 @@ class FrameEffects:
         a = c.noise_alpha
         lo, hi = c.noise_speed_min, c.noise_speed_max
         for p in self._particles:
+            # Inactive (between appearances): count down, then respawn elsewhere.
+            if p["wait"] > 0:
+                p["wait"] -= 1
+                if p["wait"] == 0:
+                    p.update(self._spawn(w, h))
+                continue
             # drift with a small velocity wander for organic, fly-like motion
             p["vx"] += random.uniform(-c.noise_jitter, c.noise_jitter)
             p["vy"] += random.uniform(-c.noise_jitter, c.noise_jitter)
@@ -173,11 +191,11 @@ class FrameEffects:
             elif sp < lo:
                 p["vx"] *= lo / sp; p["vy"] *= lo / sp
             p["x"] += p["vx"]; p["y"] += p["vy"]; p["life"] -= 1
-            # respawn when it ages out or drifts off-frame
+            # when it ages out or drifts off-frame, go idle for a random gap
             m = p["sz"] + 2
             if (p["life"] <= 0 or p["x"] < -m or p["x"] > w + m
                     or p["y"] < -m or p["y"] > h + m):
-                p.update(self._spawn(w, h))
+                p["wait"] = random.randint(c.noise_gap_min, c.noise_gap_max)
                 continue
             x0 = max(0, int(p["x"])); y0 = max(0, int(p["y"]))
             x1 = min(w, x0 + p["sz"]); y1 = min(h, y0 + p["sz"])
