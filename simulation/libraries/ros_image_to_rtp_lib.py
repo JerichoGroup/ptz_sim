@@ -15,11 +15,16 @@ NOTE: binding port 554 requires root or CAP_NET_BIND_SERVICE on Linux.
       and change RTSP_PORT in consts.py to 8554.
 """
 
+import math
+import random
 import threading
+import time
+from dataclasses import dataclass
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from std_msgs.msg import Float32
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 import gi
@@ -28,6 +33,181 @@ gi.require_version('GstRtspServer', '1.0')
 from gi.repository import Gst, GObject, GstRtspServer
 
 from libraries.sim_lib import SimLibBase
+
+
+# ==================== Frame effects (blur + noise) ====================
+# Optional realism layer applied to each frame *before* it is H.264-encoded:
+#   - zoom-refocus BLUR: a Gaussian blur that ramps up then clears after a zoom,
+#     mimicking the real lens hunting focus when it changes magnification.
+#   - sensor NOISE: small dark drifting specks (dust / flies / wind debris) that
+#     move coherently across the frame.
+#
+# Everything is tunable via the EFFECTS instance below. Requires numpy + OpenCV;
+# if either is missing the layer disables itself and frames pass through clean.
+
+try:
+    import numpy as np
+    import cv2
+    _CV_OK = True
+except Exception as _cv_err:                              # pragma: no cover
+    _CV_OK = False
+    print(f"[FrameEffects] numpy/cv2 unavailable ({_cv_err}); effects disabled")
+
+
+@dataclass
+class FrameEffectsConfig:
+    """Edit the EFFECTS instance below to configure blur and noise."""
+
+    # ---- zoom-refocus blur ----
+    blur_enabled:    bool  = True
+    max_blur:        float = 1.0    # 0..1 overall blur strength (scales blur_max_sigma)
+    blur_time:       float = 1.5    # s: total refocus settle window after a zoom
+    blur_peak_frac:  float = 0.4    # fraction of blur_time where blur peaks (≈0.6 s)
+    blur_max_sigma:  float = 9.0    # Gaussian sigma (px) at full intensity; ↑ = blurrier
+    blur_rearm_gap:  float = 0.3    # s gap between zoom changes that starts a NEW blur
+    zoom_topic:      str   = "/isaac_core/zoom"
+    zoom_epsilon:    float = 1e-4   # min zoom delta counted as "a zoom happened"
+
+    # ---- sensor noise (drifting specks) ----
+    noise_enabled:   bool  = True
+    noise_count:     int   = 7      # specks on screen at once
+    noise_size_min:  int   = 2      # speck side length (px)
+    noise_size_max:  int   = 9
+    noise_speed_min: float = 2.0    # px/frame drift speed
+    noise_speed_max: float = 11.0
+    noise_gray_min:  int   = 0      # speck darkness (0 = black)
+    noise_gray_max:  int   = 70
+    noise_alpha:     float = 0.65   # 0..1 opacity over the frame
+    noise_jitter:    float = 0.6    # per-frame velocity wander → organic motion
+    noise_life_min:  int   = 25     # frames a speck lives before respawning elsewhere
+    noise_life_max:  int   = 120
+
+
+EFFECTS = FrameEffectsConfig()      # ←—— configure blur / noise here
+
+
+class FrameEffects:
+    """Applies zoom-refocus blur and drifting-speck noise to raw frame bytes.
+
+    All methods run on the single ROS spin thread (the image and zoom callbacks
+    are serialised by rclpy's single-threaded executor), so no locking is needed.
+    Any failure falls back to returning the frame untouched — streaming never
+    breaks because of an effect.
+    """
+
+    def __init__(self, cfg: FrameEffectsConfig) -> None:
+        self.cfg = cfg
+        self.enabled = _CV_OK
+        # blur state
+        self._zoom_last_val = None
+        self._blur_t0 = None          # monotonic start of the current blur envelope
+        self._zoom_last_t = 0.0       # monotonic time of the last zoom change
+        # noise state
+        self._particles = []
+        self._noise_dims = None       # (w, h) the particles were seeded for
+
+    # ---- zoom signal → arms the blur envelope ----
+    def notify_zoom(self, value: float) -> None:
+        if not (self.enabled and self.cfg.blur_enabled):
+            return
+        if self._zoom_last_val is None:
+            self._zoom_last_val = value
+            return
+        if abs(value - self._zoom_last_val) > self.cfg.zoom_epsilon:
+            now = time.monotonic()
+            # Anchor the envelope to the START of a zoom gesture so blur builds
+            # while zooming and peaks shortly after. Re-arm when the previous
+            # envelope has finished (long continuous slew) or after an idle gap
+            # (a distinct new zoom command).
+            if (self._blur_t0 is None
+                    or (now - self._blur_t0) >= self.cfg.blur_time
+                    or (now - self._zoom_last_t) > self.cfg.blur_rearm_gap):
+                self._blur_t0 = now
+            self._zoom_last_t = now
+        self._zoom_last_val = value
+
+    # ---- blur envelope: 0 → peak (at blur_peak_frac) → 0 (at blur_time) ----
+    def _blur_sigma(self, now: float) -> float:
+        if self._blur_t0 is None:
+            return 0.0
+        tau = now - self._blur_t0
+        bt = self.cfg.blur_time
+        if tau < 0 or tau >= bt:
+            return 0.0
+        p = tau / bt
+        pk = self.cfg.blur_peak_frac
+        a = p / pk if p <= pk else (1.0 - p) / (1.0 - pk)   # triangle 0..1
+        a = max(0.0, min(1.0, a))
+        a = a * a * (3.0 - 2.0 * a)                          # smoothstep (soft)
+        return a * self.cfg.max_blur * self.cfg.blur_max_sigma
+
+    # ---- noise particles ----
+    def _spawn(self, w, h):
+        c = self.cfg
+        speed = random.uniform(c.noise_speed_min, c.noise_speed_max)
+        ang = random.uniform(0.0, 2.0 * math.pi)
+        return {
+            "x": random.uniform(0, w), "y": random.uniform(0, h),
+            "vx": speed * math.cos(ang), "vy": speed * math.sin(ang),
+            "sz": random.randint(c.noise_size_min, c.noise_size_max),
+            "gray": random.randint(c.noise_gray_min, c.noise_gray_max),
+            "life": random.randint(c.noise_life_min, c.noise_life_max),
+        }
+
+    def _ensure_particles(self, w, h):
+        if self._noise_dims != (w, h):
+            self._particles = [self._spawn(w, h) for _ in range(self.cfg.noise_count)]
+            self._noise_dims = (w, h)
+
+    def _draw_noise(self, frame, w, h):
+        c = self.cfg
+        a = c.noise_alpha
+        lo, hi = c.noise_speed_min, c.noise_speed_max
+        for p in self._particles:
+            # drift with a small velocity wander for organic, fly-like motion
+            p["vx"] += random.uniform(-c.noise_jitter, c.noise_jitter)
+            p["vy"] += random.uniform(-c.noise_jitter, c.noise_jitter)
+            sp = math.hypot(p["vx"], p["vy"]) or 1.0
+            if sp > hi:
+                p["vx"] *= hi / sp; p["vy"] *= hi / sp
+            elif sp < lo:
+                p["vx"] *= lo / sp; p["vy"] *= lo / sp
+            p["x"] += p["vx"]; p["y"] += p["vy"]; p["life"] -= 1
+            # respawn when it ages out or drifts off-frame
+            m = p["sz"] + 2
+            if (p["life"] <= 0 or p["x"] < -m or p["x"] > w + m
+                    or p["y"] < -m or p["y"] > h + m):
+                p.update(self._spawn(w, h))
+                continue
+            x0 = max(0, int(p["x"])); y0 = max(0, int(p["y"]))
+            x1 = min(w, x0 + p["sz"]); y1 = min(h, y0 + p["sz"])
+            if x1 <= x0 or y1 <= y0:
+                continue
+            roi = frame[y0:y1, x0:x1]
+            roi[:] = (roi * (1.0 - a) + p["gray"] * a).astype(np.uint8)
+
+    # ---- main entry: returns possibly-modified raw frame bytes ----
+    def process(self, raw: bytes, w: int, h: int, c: int) -> bytes:
+        if not self.enabled:
+            return raw
+        cfg = self.cfg
+        sigma = self._blur_sigma(time.monotonic()) if cfg.blur_enabled else 0.0
+        do_blur = sigma > 0.3
+        do_noise = cfg.noise_enabled and cfg.noise_count > 0
+        if not do_blur and not do_noise:
+            return raw                       # fast path: nothing to do this frame
+        try:
+            if len(raw) != w * h * c:
+                return raw                   # padded/odd layout — don't risk corruption
+            arr = np.frombuffer(raw, np.uint8).reshape(h, w, c)
+            frame = cv2.GaussianBlur(arr, (0, 0), sigma) if do_blur else arr.copy()
+            if do_noise:
+                self._ensure_particles(w, h)
+                self._draw_noise(frame, w, h)
+            return frame.tobytes()
+        except Exception as e:
+            print(f"[FrameEffects] process failed, passing frame through: {e}")
+            return raw
 
 
 # ==================== GstRTSPBridge ====================
@@ -66,9 +246,15 @@ class GstRTSPBridge:
         "! rtph264pay config-interval=1 pt=96 name=pay0 )"
     )
 
+    # ROS image encoding → channel count, for the FrameEffects numpy reshape.
+    _CHANNELS = {"rgb8": 3, "bgr8": 3, "mono8": 1, "rgba8": 4, "bgra8": 4}
+
     def __init__(self, rtsp_port: int, rtsp_paths: list) -> None:
         self._rtsp_port = rtsp_port
         self._rtsp_paths = rtsp_paths
+
+        # Realism layer (zoom-refocus blur + drifting-speck noise).
+        self.effects = FrameEffects(EFFECTS)
 
         # appsrc reference — set by media-configure, cleared by media-unprepared.
         # Guarded by _appsrc_lock because media-configure fires in the GLib thread
@@ -167,6 +353,11 @@ class GstRTSPBridge:
             print(f"[RTSP Bridge] Unsupported encoding: {msg.encoding}")
             return
 
+        # Apply blur/noise realism before encoding (no-op when nothing is active).
+        channels = self._CHANNELS.get(msg.encoding)
+        if channels is not None:
+            raw = self.effects.process(raw, msg.width, msg.height, channels)
+
         caps_str = caps.to_string()
         if caps_str != self._last_caps_str:
             appsrc.set_property("caps", caps)
@@ -204,12 +395,23 @@ class RosImageToRTSPNode(Node):
             depth=1,
         )
         self.sub = self.create_subscription(Image, topic, self._callback, _qos)
+
+        # Zoom feed drives the refocus blur. Default QoS (RELIABLE/10) matches
+        # ptz_sim's zoom publisher. Same single-threaded executor as the image
+        # callback, so FrameEffects state needs no locking.
+        self.zoom_sub = self.create_subscription(
+            Float32, EFFECTS.zoom_topic, self._zoom_callback, 10
+        )
         self.get_logger().info(
-            f"Subscribing to {topic}, RTSP server on :{rtsp_port}"
+            f"Subscribing to {topic} (+ zoom {EFFECTS.zoom_topic}), "
+            f"RTSP server on :{rtsp_port}"
         )
 
     def _callback(self, msg: Image) -> None:
         self.bridge.send_image(msg)
+
+    def _zoom_callback(self, msg: Float32) -> None:
+        self.bridge.effects.notify_zoom(float(msg.data))
 
     def destroy_node(self) -> None:
         self.bridge.close()

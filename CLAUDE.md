@@ -42,7 +42,7 @@ udp-sender    # UDP-based GUI for sending pose commands
 | `--distance-sensor` | Enable laser range sensor |
 | `--bbox-publisher` | Publish object bounding boxes |
 | `--sat` | Enable screenshot/frame capture |
-| `--image-rtp` | Stream images over RTP |
+| `--image-rtp` | Serve camera images over RTSP (H.264, port 8554) |
 
 There are no automated tests or linting setups in this project.
 
@@ -73,17 +73,20 @@ simulation/sim_utils.py         ← argparse and misc utilities
 
 **`usd/`** — Universal Scene Description assets: maps (Cesium Earth tilesets), cameras (ROS2/UDP variants), sensors, drone assets.
 
-**`ptz/`** — Distributed PTZ simulation (newest module):
-- `ptz_sim.py` — host-side: listens for UDP commands from Jetson, controls gimbal via `set_gimbal_angle()`, sends pose back at 20 Hz
-- `ptz_sim_controller.py` — Jetson-side: drop-in replacement for real PTZ controller, sends commands over UDP
-- `controller.py` — real ONVIF PTZ controller (Jetson only, has dronetracker imports)
-- `jetson_test_ptz_sim.py` — Jetson-side test entry point
+**`ptz/`** — Distributed PTZ simulation (Jetson edge ↔ Isaac Sim host). Everything under `ptz/from_real/` is the real Jetson tracking repo (`dronetracker`) and is treated as **read-only reference — do not modify it**.
+- `ptz_sim.py` — host-side `PTZSim`: receives UDP commands and drives the gimbal via a **persistent ROS2 publisher** on `/isaac_core/gimbal` (+ `/isaac_core/zoom`). Runs a 25 Hz ContinuousMove integrator (TTL-coalesced), a 20 Hz zoom slew (7 s full travel), and a cosine `go_home` slew. `relative_move` uses ONVIF **TranslationSpaceFov** units: `dp`/`dt` are fractions of the *current* (zoom-dependent) HFoV, matching `controller.py` — not a constant angle. `stop_all` halts motion but leaves the sim running; home is auto-saved at the startup pose.
+- `ptz_sim_controller.py` — Jetson-side `PTZSimController`: drop-in replacement for `PTZController` (same public API — `move`/`relative_move`/`zoom_*`/`center_and_zoom`/`vel_scale`/`save_home`/`go_home`/`trigger_autofocus`). Serialises commands to JSON over UDP.
+- `from_real/dronetracker/ptz/controller.py` — the real ONVIF `PTZController`; fidelity reference for the two files above.
+- `jetson_test_ptz_sim.py` — standalone Jetson test driver. `ptz_tui.py` — curses keyboard controller (`--host <HOST_IP>`, `m` toggles remote/local). `rtsp_test.py` — RTSP viewer (`--backend gst` = low-latency, `--backend ffmpeg`).
 
-**Communication topology:**
+**Communication topology (NAT/VPN-aware, reply-to-sender):** the Jetson sits behind a NAT/VPN bridge, so the host can never *initiate* to it. Both ends bind ONE UDP socket; the host replies pose to the **source address** of received packets (`jetson_ip=None` default — set env `PTZ_JETSON_IP` only for a directly-routable setup). A 1.5 s `ping` heartbeat from the Jetson keeps the NAT mapping open and the reply address fresh.
 ```
-Jetson (PTZSimController) ──UDP:5005──▶ Host (PTZSim / Isaac Sim)
-                          ◀──UDP:5006── (pose feedback at 20 Hz)
+Jetson (PTZSimController, binds :5006) ──cmd UDP──▶ Host (PTZSim, binds :5005)
+                                       ◀─pose UDP── (reply-to-sender, 20 Hz, same socket)
+Host RTSP H.264 (:8554) ───────────────video──────▶ Jetson RtspGrabber
 ```
+
+**Video (RTSP):** `simulation/libraries/ros_image_to_rtp_lib.py` serves H.264 over RTSP via `GstRtspServer` (port `RTSP_PORT=8554`; paths `/unicast/c1/s0/live` & `/cam/realmonitor`), launched as a subprocess by `lib_manager.py` when `--image-rtp`. The `format=I420` cap is load-bearing (RGB→4:4:4 breaks baseline H.264 → corrupt output). The server is low-latency (verified via a `gst-launch` client); OpenCV+FFMPEG clients add ~2 s of their own RTSP buffering, so use a GStreamer client (`appsink sync=false drop=true max-buffers=1`) for low latency.
 
 **Coordinate systems used throughout:**
 - WGS84 (lat/lon/alt) — external input
@@ -101,7 +104,13 @@ MAX_OUTPUTS_ROS_HRZ = 30    # Hz
 GLOBAL_POSE_TOPIC = "/isaac_core/global_pose"
 IMAGE_TOPIC       = "/isaac_core/image_rgb"
 GIMBAL_TOPIC      = "/isaac_core/gimbal"
+ZOOM_TOPIC        = "/isaac_core/zoom"      # Float32, drives zoom_node FOV
 LASER_TOPIC       = "/isaac_core/distance_sensor"
-RTP_VIDEO_PORT = 5004
-RTP_META_PORT  = 5005
+# RTSP video (ptz/ pipeline)
+RTSP_PORT  = 8554
+RTSP_PATHS = ["/unicast/c1/s0/live", "/cam/realmonitor"]
+RTP_VIDEO_PORT = 5004   # legacy, unused
+RTP_META_PORT  = 5005   # legacy, unused
 ```
+
+PTZ UDP ports: host `PTZSim` binds **5005** (commands in); Jetson `PTZSimController` binds **5006** (pose in). Pose is returned reply-to-sender on the host's command socket (NAT/VPN-aware).
