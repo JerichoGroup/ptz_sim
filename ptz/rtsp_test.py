@@ -1,32 +1,66 @@
 #!/usr/bin/env python3
-"""Quick RTSP stream viewer — validates the same code path as the Jetson's RtspGrabber.
+"""Low-latency RTSP stream viewer for diagnosing glass-to-glass delay.
+
+Two backends are available so we can isolate WHERE latency comes from:
+
+  --backend gst     (default) OpenCV via GStreamer. rtspsrc latency=0 +
+                    appsink sync=false drop=true → near-zero client buffering.
+                    This is the true low-latency path.
+
+  --backend ffmpeg  OpenCV via FFMPEG — the SAME backend the Jetson's
+                    RtspGrabber uses. FFMPEG's RTSP demuxer keeps a stubborn
+                    internal buffer (~1-2 s) that survives max_delay tweaks.
+
+If 'gst' is low-latency but 'ffmpeg' is ~2 s, the bottleneck is the FFMPEG
+client decoder, not our server.
 
 Usage:
     python3 ptz/rtsp_test.py
+    python3 ptz/rtsp_test.py --backend ffmpeg
     python3 ptz/rtsp_test.py --url rtsp://192.168.30.171:8554/unicast/c1/s0/live
 """
 
 import argparse
+import os
 import time
 import cv2
 
 DEFAULT_URL = "rtsp://127.0.0.1:8554/unicast/c1/s0/live"
 
 
+def open_gst(url):
+    # latency=0          : no rtspsrc jitter buffer
+    # drop-on-latency    : discard late packets instead of waiting
+    # appsink sync=false : display frames as soon as decoded, no clock sync wait
+    # drop=true max-buffers=1 : only ever hold the newest decoded frame
+    pipeline = (
+        f"rtspsrc location={url} latency=0 drop-on-latency=true protocols=udp "
+        "! rtph264depay ! h264parse ! avdec_h264 "
+        "! videoconvert ! video/x-raw,format=BGR "
+        "! appsink sync=false drop=true max-buffers=1"
+    )
+    print(f"[gst] {pipeline}")
+    return cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+
+
+def open_ffmpeg(url):
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+        "rtsp_transport;udp|fflags;nobuffer|flags;low_delay|"
+        "max_delay;0|reorder_queue_size;0|stimeout;5000000"
+    )
+    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_URL)
+    parser.add_argument("--backend", choices=["gst", "ffmpeg"], default="gst")
     args = parser.parse_args()
 
-    # Match the exact OpenCV flags RtspGrabber uses
-    import os
-    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-        "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|strict;-2"
-    )
-
-    print(f"Connecting to {args.url} ...")
-    cap = cv2.VideoCapture(args.url, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    print(f"Connecting to {args.url}  (backend={args.backend}) ...")
+    cap = open_gst(args.url) if args.backend == "gst" else open_ffmpeg(args.url)
 
     if not cap.isOpened():
         print("ERROR: could not open RTSP stream")

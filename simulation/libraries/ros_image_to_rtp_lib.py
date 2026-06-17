@@ -20,6 +20,7 @@ import threading
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 import gi
 gi.require_version('Gst', '1.0')
@@ -43,10 +44,24 @@ class GstRTSPBridge:
     """
 
     # pay0 is the mandatory payloader name required by GstRtspServer.
+    # Queue is leaky=downstream: when the encoder is busy and a new frame arrives,
+    # the stale waiting frame is dropped so the encoder always gets the freshest frame.
+    # key-int-max=30: force an IDR every ~1 s so that any artifact from a skipped
+    # reference frame clears up quickly (vs. the x264 default of 250 frames).
+    # max-bytes=0 on appsrc: default is 200 KB, but raw 1080p frames are ~6 MB.
+    # Without unlimited buffer, every push after the first would silently fail
+    # because 6 MB > 200 KB, and block=false makes the failure non-blocking/silent.
+    # The explicit "video/x-raw,format=I420" caps after videoconvert force 4:2:0
+    # chroma. Without it, RGB input negotiates to 4:4:4 (Y444), which the H.264
+    # baseline profile cannot encode — x264 then errors per-frame and emits
+    # corrupt output (smearing / wrong colors). I420 is the universally-supported
+    # 4:2:0 format every H.264 decoder expects.
     _FACTORY_PIPELINE = (
-        "( appsrc name=src is-live=true do-timestamp=true block=false format=time "
+        "( appsrc name=src is-live=true do-timestamp=true block=false format=time max-bytes=0 "
+        "! queue max-size-buffers=2 leaky=downstream "
         "! videoconvert "
-        "! x264enc tune=zerolatency bitrate=10000 speed-preset=superfast "
+        "! video/x-raw,format=I420 "
+        "! x264enc tune=zerolatency speed-preset=veryfast bitrate=10000 key-int-max=30 "
         "! h264parse "
         "! rtph264pay config-interval=1 pt=96 name=pay0 )"
     )
@@ -80,6 +95,7 @@ class GstRTSPBridge:
         factory = GstRtspServer.RTSPMediaFactory.new()
         factory.set_launch(self._FACTORY_PIPELINE)
         factory.set_shared(True)  # all clients share one pipeline instance
+        factory.props.latency = 0  # remove the 200 ms server-side jitter buffer
         factory.connect("media-configure", self._on_media_configure)
 
         mounts = server.get_mount_points()
@@ -92,6 +108,7 @@ class GstRTSPBridge:
 
     def _on_media_configure(self, factory, media) -> None:
         """Fired in GLib thread when the first RTSP client connects."""
+        media.set_latency(0)  # belt-and-suspenders: also clear media-level jitter buffer
         pipeline = media.get_element()
         appsrc = pipeline.get_by_name("src")
         if appsrc is None:
@@ -179,7 +196,14 @@ class RosImageToRTSPNode(Node):
     def __init__(self, topic: str, rtsp_port: int, rtsp_paths: list) -> None:
         super().__init__("ros_image_to_rtsp")
         self.bridge = GstRTSPBridge(rtsp_port, rtsp_paths)
-        self.sub = self.create_subscription(Image, topic, self._callback, 10)
+        # BEST_EFFORT + depth=1: always deliver the newest frame; drop stale ones.
+        # Default RELIABLE/depth=10 can queue up to 10 frames (~333 ms at 30 Hz).
+        _qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.sub = self.create_subscription(Image, topic, self._callback, _qos)
         self.get_logger().info(
             f"Subscribing to {topic}, RTSP server on :{rtsp_port}"
         )
