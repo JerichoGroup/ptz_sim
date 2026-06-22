@@ -8,7 +8,7 @@
             }
             dictionary Perspective = {
                 double3 position = (-19.537144675348042, 0.02877626403976663, 13.908428149212043)
-                double3 target = (-7.3777847443727484, -0.8616226518259166, 5.055699559750462)
+                double3 target = (-4.899740974606088, -3.130203001842082, 15.576034379197758)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -273,8 +273,8 @@ def Xform "bboxes" (
         double cesium:anchor:latitude = 32.22480999999999
         double cesium:anchor:longitude = 35.25621
         double3 cesium:anchor:position = (4410542.061819228, 3117779.8066218565, 3381821.901378448)
-        double3 xformOp:rotateXYZ = (-6.36110936292703e-15, -4.876562723043536e-15, 5.871183753757845e-15)
-        double3 xformOp:scale = (1, 1.0000000000000007, 1.000000000000001)
+        double3 xformOp:rotateXYZ = (-9.541664044390544e-15, -4.24002010395005e-15, 9.907127362199341e-15)
+        double3 xformOp:scale = (1, 1.0000000000000009, 1.0000000000000016)
         double3 xformOp:translate = (0, 0, 0)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 
@@ -905,8 +905,8 @@ def cleanup(db: og.Database):
 
 def compute(db: og.Database):
     global angle, counter
-    N = 10          # ticks per step — raise to slow down
-    STEP = 0.01     # degrees per step
+    N = 5          # ticks per step — raise to slow down
+    STEP = 0.015     # degrees per step
 
     counter += 1
     if counter >= N:
