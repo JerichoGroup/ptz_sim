@@ -55,27 +55,36 @@ except Exception as _cv_err:                              # pragma: no cover
     print(f"[FrameEffects] numpy/cv2 unavailable ({_cv_err}); effects disabled")
 
 
-# Sprite images live in <repo>/pics; resolve relative so it works on any host.
+# Sprite sources live in <repo>/pics (static PNGs) and <repo>/gifs (animations);
+# resolve relative so it works on any host.
 _PICS_DIR = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "pics"))
+_GIFS_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "gifs"))
 
 
 def _pics(*names):
     return [os.path.join(_PICS_DIR, n) for n in names]
 
 
+def _gifs(*names):
+    return [os.path.join(_GIFS_DIR, n) for n in names]
+
+
 @dataclass
 class SpriteKind:
     """One family of drifting objects (e.g. flies, birds).
 
-    A random image from `images` is chosen per spawn and scaled (aspect-ratio
+    A random source from `images` is chosen per spawn and scaled (aspect-ratio
     preserved) so its LONGER side equals a random value in [size_min, size_max].
-    `count` is the max on screen at once; `gap_*` idle frames between a given
-    slot's appearances make the on-screen count fluctuate down to 0 — bigger
-    gaps ⇒ rarer ⇒ lower "rate".
+    Sources may be static PNGs *or* animated GIFs — a GIF's frames are played
+    back (one gif-frame held for `anim_hold` rendered frames) so the sprite
+    actually moves (e.g. birds flapping). `count` is the max on screen at once;
+    `gap_*` idle frames between a slot's appearances make the on-screen count
+    fluctuate down to 0 — bigger gaps ⇒ rarer ⇒ lower "rate".
     """
     name:      str
-    images:    list                       # PNG paths (alpha respected); [] → gray squares
+    images:    list                       # PNG and/or GIF paths; [] → gray squares
     count:     int   = 1                  # max simultaneously on screen
     size_min:  int   = 6                  # longer-side length in px
     size_max:  int   = 20
@@ -87,25 +96,29 @@ class SpriteKind:
     gap_max:   int   = 160
     alpha:     float = 0.9                # 0..1 opacity multiplier
     jitter:    float = 0.6                # per-frame velocity wander
+    anim_hold: int   = 3                  # rendered frames each GIF frame is shown
     gray:      int   = 25                 # fallback square shade if images missing
 
 
 def _default_kinds():
     return [
-        # Flies: small, fast, frequent (0–2 on screen).
+        # Flies: small, fast, frequent (0–2 on screen). Static PNGs (too small
+        # for animation to read on-screen).
         SpriteKind(
             name="fly", images=_pics("fly1.png", "fly2.png", "fly3.png"),
             count=2, size_min=3, size_max=14,
             speed_min=10.0, speed_max=70.0,
             life_min=25, life_max=120, gap_min=8, gap_max=70,
             alpha=0.85, jitter=0.9),
-        # Birds: bigger, slower, rarer (0–1, ~half the fly rate).
+        # Birds: smaller-than-before, slow, rare (0–1, ~half the fly rate),
+        # animated from flapping-bird GIFs.
         SpriteKind(
-            name="bird", images=_pics("bird1.png", "bird2.png", "bird3.png", "bird4.png"),
-            count=1, size_min=22, size_max=60,
+            name="bird",
+            images=_gifs("bird1.gif", "bird2.gif", "bird3.gif", "bird4.gif", "bird5.gif"),
+            count=1, size_min=14, size_max=40,
             speed_min=2.0, speed_max=12.0,
             life_min=70, life_max=240, gap_min=90, gap_max=260,
-            alpha=0.92, jitter=0.35),
+            alpha=0.92, jitter=0.35, anim_hold=3),
     ]
 
 
@@ -147,7 +160,9 @@ class FrameEffects:
         self._zoom_last_val = None
         self._blur_t0 = None          # monotonic start of the current blur envelope
         self._zoom_last_t = 0.0       # monotonic time of the last zoom change
-        # noise state — one entry per kind: {"cfg", "bases":[(color,alpha)], "particles":[]}
+        # noise state — one entry per kind:
+        #   {"cfg", "bases":[ [ (color,alpha), ... ] ], "particles":[]}
+        # each base is an animation: a list of (color, alpha) frames (1 for PNGs).
         self._kind_states = []
         self._sprites_loaded = False
         self._noise_dims = None       # (w, h) the particles were seeded for
@@ -187,52 +202,76 @@ class FrameEffects:
         a = a * a * (3.0 - 2.0 * a)                          # smoothstep (soft)
         return a * self.cfg.max_blur * self.cfg.blur_max_sigma
 
-    # ---- sprite images (loaded once, in the frame's channel order) ----
+    # ---- sprite sources (loaded once, in the frame's channel order) ----
+    @staticmethod
+    def _load_source(path, order):
+        """Load a PNG (1 frame) or GIF (N frames) → list of (color, alpha) frames
+        in the frame's channel order, color float32, alpha float32 0..1."""
+        frames = []
+        if os.path.splitext(path)[1].lower() == ".gif":
+            from PIL import Image, ImageSequence
+            im = Image.open(path)
+            for fr in ImageSequence.Iterator(im):
+                arr = np.asarray(fr.convert("RGBA"))      # PIL → RGBA (RGB order)
+                color = arr[:, :, :3].astype(np.float32)
+                alpha = arr[:, :, 3].astype(np.float32) / 255.0
+                if order == "bgr":                        # frame wants BGR
+                    color = color[:, :, ::-1].copy()
+                frames.append((color, alpha))
+        else:
+            img = cv2.imread(path, cv2.IMREAD_UNCHANGED)  # cv2 → BGR(A)
+            if img is None:
+                raise RuntimeError("imread returned None")
+            if img.ndim == 3 and img.shape[2] == 4:
+                color = img[:, :, :3].astype(np.float32)
+                alpha = img[:, :, 3].astype(np.float32) / 255.0
+            elif img.ndim == 3:
+                color = img[:, :, :3].astype(np.float32)
+                alpha = np.ones(img.shape[:2], np.float32)
+            else:
+                color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR).astype(np.float32)
+                alpha = np.ones(img.shape[:2], np.float32)
+            if order == "rgb":                            # frame wants RGB
+                color = color[:, :, ::-1].copy()
+            frames.append((color, alpha))
+        return frames
+
     def _load_sprites(self, order: str) -> None:
         if self._sprites_loaded:
             return
         self._sprites_loaded = True
         self._kind_states = []
         for k in self.cfg.kinds:
-            bases = []
+            bases = []                       # each base is a list of (color, alpha) frames
             for path in k.images:
                 try:
-                    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-                    if img is None:
-                        raise RuntimeError("imread returned None")
-                    if img.ndim == 3 and img.shape[2] == 4:
-                        color = img[:, :, :3].astype(np.float32)
-                        alpha = img[:, :, 3].astype(np.float32) / 255.0
-                    elif img.ndim == 3:
-                        color = img[:, :, :3].astype(np.float32)
-                        alpha = np.ones(img.shape[:2], np.float32)
-                    else:  # grayscale source
-                        color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR).astype(np.float32)
-                        alpha = np.ones(img.shape[:2], np.float32)
-                    if order == "rgb":              # cv2 loads BGR; match the frame
-                        color = color[:, :, ::-1].copy()
-                    bases.append((color, alpha))
+                    bases.append(self._load_source(path, order))
                 except Exception as e:
                     print(f"[FrameEffects] {k.name}: could not load {path} ({e})")
             if not bases:
-                print(f"[FrameEffects] {k.name}: no images → gray-square fallback")
+                print(f"[FrameEffects] {k.name}: no sources → gray-square fallback")
             self._kind_states.append({"cfg": k, "bases": bases, "particles": []})
         print("[FrameEffects] sprites: " + ", ".join(
             f"{ks['cfg'].name}×{len(ks['bases'])}" for ks in self._kind_states))
 
-    def _make_sprite(self, color, alpha, size, alpha_mul):
-        """Scale a base image so its longer side == `size` (aspect preserved),
-        random horizontal flip for heading variety. Returns (color, alpha)."""
-        h0, w0 = alpha.shape[:2]
+    def _make_anim(self, base_frames, size, alpha_mul):
+        """Scale every frame of an animation so its longer side == `size` (aspect
+        preserved), with one random L/R flip applied to all frames so the sprite
+        keeps a consistent heading. Returns (frames, sw, sh)."""
+        h0, w0 = base_frames[0][1].shape[:2]
         scale = size / float(max(h0, w0))
         nw = max(1, int(round(w0 * scale)))
         nh = max(1, int(round(h0 * scale)))
-        spr = cv2.resize(color, (nw, nh), interpolation=cv2.INTER_AREA)
-        sa = cv2.resize(alpha, (nw, nh), interpolation=cv2.INTER_AREA)
-        if random.random() < 0.5:                   # flip L/R only (vertical looks wrong)
-            spr = cv2.flip(spr, 1)
-            sa = cv2.flip(sa, 1)
-        return spr, sa * alpha_mul
+        flip = random.random() < 0.5
+        out = []
+        for color, alpha in base_frames:
+            c = cv2.resize(color, (nw, nh), interpolation=cv2.INTER_AREA)
+            a = cv2.resize(alpha, (nw, nh), interpolation=cv2.INTER_AREA)
+            if flip:
+                c = cv2.flip(c, 1)
+                a = cv2.flip(a, 1)
+            out.append((c, a * alpha_mul))
+        return out, nw, nh
 
     # ---- noise particles ----
     def _spawn(self, ks, w, h):
@@ -242,18 +281,19 @@ class FrameEffects:
         ang = random.uniform(0.0, 2.0 * math.pi)
         size = random.randint(k.size_min, k.size_max)
         if ks["bases"]:
-            color, alpha = random.choice(ks["bases"])
-            spr, sa = self._make_sprite(color, alpha, size, k.alpha)
-            sw, sh = spr.shape[1], spr.shape[0]
+            frames, sw, sh = self._make_anim(random.choice(ks["bases"]), size, k.alpha)
         else:
-            spr = sa = None
+            frames = None
             sw = sh = size
         return {
             "x": random.uniform(0, w), "y": random.uniform(0, h),
             "vx": speed * math.cos(ang), "vy": speed * math.sin(ang),
             "sw": sw, "sh": sh, "gray": k.gray,
             "life": random.randint(k.life_min, k.life_max),
-            "wait": 0, "sprite": spr, "salpha": sa,
+            "wait": 0,
+            "frames": frames,                       # list of (color, alpha) or None
+            "fidx": 0,                              # current animation frame
+            "fhold": k.anim_hold,                   # ticks left on the current frame
         }
 
     def _ensure_particles(self, w, h):
@@ -298,17 +338,24 @@ class FrameEffects:
                         or p["y"] < -m or p["y"] > h + m):
                     p["wait"] = random.randint(k.gap_min, k.gap_max)
                     continue
+                # advance the wing-flap animation (no-op for 1-frame sprites)
+                frames = p["frames"]
+                if frames is not None and len(frames) > 1:
+                    p["fhold"] -= 1
+                    if p["fhold"] <= 0:
+                        p["fidx"] = (p["fidx"] + 1) % len(frames)
+                        p["fhold"] = k.anim_hold
                 # visible rect on the frame, and matching sub-rect of the sprite
                 px = int(p["x"]); py = int(p["y"])
                 x0 = max(0, px); y0 = max(0, py)
                 x1 = min(w, px + sw); y1 = min(h, py + sh)
                 if x1 <= x0 or y1 <= y0:
                     continue
-                sprite = p["sprite"]
-                if sprite is not None and ch >= 3:
+                if frames is not None and ch >= 3:
+                    spr_color, spr_alpha = frames[p["fidx"]]
                     sx0 = x0 - px; sy0 = y0 - py
-                    spr = sprite[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
-                    al = p["salpha"][sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)][..., None]
+                    spr = spr_color[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+                    al = spr_alpha[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)][..., None]
                     roi = frame[y0:y1, x0:x1, :3]
                     roi[:] = (roi * (1.0 - al) + spr * al).astype(np.uint8)
                 else:
