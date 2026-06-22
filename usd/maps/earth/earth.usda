@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (-19.537144675348042, 0.02877626403976663, 13.908428149212043)
-                double3 target = (-4.899740974606088, -3.130203001842082, 15.576034379197758)
+                double3 position = (-7.803255792548676, 47.7270341428675, 46.77841396995624)
+                double3 target = (-5.705076478959352, 36.53270010888744, 35.94683625197579)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -228,10 +228,15 @@ def Xform "tilesets"
 
     def CesiumTilesetPrim "nablus"
     {
+        bool cesium:enableFrustumCulling = 0
+        bool cesium:forbidHoles = 1
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
+        uint cesium:loadingDescendantLimit = 48
+        uint64 cesium:maximumCachedBytes = 8589934592
+        float cesium:maximumScreenSpaceError = 8
         uniform token cesium:sourceType = "url"
         string cesium:url = "http://10.20.15.122:8088/nablus/tileset.json"
         float3[] extent = [(-7982.7725, -5877.865, -751.89636), (8347.764, 3756.5452, 699.53015)]
@@ -273,9 +278,9 @@ def Xform "bboxes" (
         double cesium:anchor:latitude = 32.22480999999999
         double cesium:anchor:longitude = 35.25621
         double3 cesium:anchor:position = (4410542.061819228, 3117779.8066218565, 3381821.901378448)
-        double3 xformOp:rotateXYZ = (-9.541664044390544e-15, -4.24002010395005e-15, 9.907127362199341e-15)
-        double3 xformOp:scale = (1, 1.0000000000000009, 1.0000000000000016)
-        double3 xformOp:translate = (0, 0, 0)
+        double3 xformOp:rotateXYZ = (-3.1805546814635124e-15, -5.936028145530076e-15, 1.2597756434493676e-14)
+        double3 xformOp:scale = (1, 1.0000000000000013, 1.0000000000000022)
+        double3 xformOp:translate = (-4.656612873077393e-10, 0, 1.862645149230957e-9)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 
         over "Combat_FPV_Drone_Kamikaze"
