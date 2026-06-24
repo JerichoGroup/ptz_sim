@@ -73,20 +73,27 @@ simulation/sim_utils.py         ← argparse and misc utilities
 
 **`usd/`** — Universal Scene Description assets: maps (Cesium Earth tilesets), cameras (ROS2/UDP variants), sensors, drone assets.
 
-**`ptz/`** — Distributed PTZ simulation (Jetson edge ↔ Isaac Sim host). Everything under `ptz/from_real/` is the real Jetson tracking repo (`dronetracker`) and is treated as **read-only reference — do not modify it**.
-- `ptz_sim.py` — host-side `PTZSim`: receives UDP commands and drives the gimbal via a **persistent ROS2 publisher** on `/isaac_core/gimbal` (+ `/isaac_core/zoom`). Runs a 25 Hz ContinuousMove integrator (TTL-coalesced), a 20 Hz zoom slew (7 s full travel), and a cosine `go_home` slew. `relative_move` uses ONVIF **TranslationSpaceFov** units: `dp`/`dt` are fractions of the *current* (zoom-dependent) HFoV, matching `controller.py` — not a constant angle. `stop_all` halts motion but leaves the sim running; home is auto-saved at the startup pose.
-- `ptz_sim_controller.py` — Jetson-side `PTZSimController`: drop-in replacement for `PTZController` (same public API — `move`/`relative_move`/`zoom_*`/`center_and_zoom`/`vel_scale`/`save_home`/`go_home`/`trigger_autofocus`). Serialises commands to JSON over UDP.
-- `from_real/dronetracker/ptz/controller.py` — the real ONVIF `PTZController`; fidelity reference for the two files above.
-- `jetson_test_ptz_sim.py` — standalone Jetson test driver. `ptz_tui.py` — curses keyboard controller (`--host <HOST_IP>`, `m` toggles remote/local). `rtsp_test.py` — RTSP viewer (`--backend gst` = low-latency, `--backend ffmpeg`).
+**`ptz/`** — Distributed PTZ simulation (Jetson edge ↔ Isaac Sim host). Everything under `ptz/from_real/` is the real Jetson tracking repo (`dronetracker`) and is **read-only reference — do not modify it**.
+- `ptz_sim.py` — host-side `PTZSim` and the main host entry point (`python3 ./ptz/ptz_sim.py`; wraps Isaac via `HostIsaacManager(image_rtp=True)`). Receives UDP commands and drives the gimbal via a **persistent ROS2 publisher** on `/isaac_core/gimbal` (+ `/isaac_core/zoom`). Background threads: `_recv_loop` (parse commands), `_pose_loop` (20 Hz pose back), `_mover_loop` (25 Hz TTL-coalesced ContinuousMove integrator), `_zoom_loop` (20 Hz zoom slew, 7 s full travel), `_scene_loop` (target playback). `relative_move` uses ONVIF **TranslationSpaceFov** units: `dp`/`dt` are fractions of the *current* (zoom-dependent) HFoV, matching `controller.py` — not a constant angle. `stop_all` halts motion but leaves the sim running; home is auto-saved at the startup pose. Camera look-point set in `_init_camera_position` (lat 32.20647, lon 35.29034, alt 540, yaw 90). Env vars: `PTZ_JETSON_IP`, `PTZ_JETSON_PORT` (default 5006), `PTZ_SCENE_DELAY_S` (default 20).
+- `ptz_sim_controller.py` — Jetson-side `PTZSimController`: drop-in replacement for `PTZController` (same public API — `move`/`relative_move`/`zoom_*`/`center_and_zoom`/`vel_scale`/`save_home`/`go_home`/`trigger_autofocus`). Serialises commands to JSON over UDP; runs a 1.5 s `ping` heartbeat; syncs sim zoom truth back into `zoom_pos` from received pose.
+- `scenes.py` — scene library. A *scene* flies a simulated target drone (`UdpBot`, sent to Isaac on **UDP 33335**) through a canned trajectory so the Jetson tracker has something to lock onto. Register a `scene_N(bot)` in the `SCENES` dict; `run_scene(n)` creates/runs/tears down the bot (blocking, finite). Target spawns at the camera look-point (32.20647, 35.29034, 540).
+- `from_real/dronetracker/ptz/controller.py` — real ONVIF `PTZController`; fidelity reference for the two files above.
+- `jetson_test_ptz_sim.py` — standalone Jetson test driver (cycles through commands). `ptz_tui.py` — curses keyboard controller (`--host <HOST_IP>`, `m` toggles remote/local target). `rtsp_test.py` — RTSP viewer (`--backend gst` = low-latency, `--backend ffmpeg`). `host_udp_listener.py` / `nirchuk.py` — debug scratch scripts (raw UDP dump; bot-flying prototype behind `scenes.py`).
 
 **Communication topology (NAT/VPN-aware, reply-to-sender):** the Jetson sits behind a NAT/VPN bridge, so the host can never *initiate* to it. Both ends bind ONE UDP socket; the host replies pose to the **source address** of received packets (`jetson_ip=None` default — set env `PTZ_JETSON_IP` only for a directly-routable setup). A 1.5 s `ping` heartbeat from the Jetson keeps the NAT mapping open and the reply address fresh.
 ```
 Jetson (PTZSimController, binds :5006) ──cmd UDP──▶ Host (PTZSim, binds :5005)
                                        ◀─pose UDP── (reply-to-sender, 20 Hz, same socket)
+Host (UdpBot target) ──────UDP :33335──▶ Isaac Sim (drone prim)   [scene playback]
 Host RTSP H.264 (:8554) ───────────────video──────▶ Jetson RtspGrabber
 ```
 
-**Video (RTSP):** `simulation/libraries/ros_image_to_rtp_lib.py` serves H.264 over RTSP via `GstRtspServer` (port `RTSP_PORT=8554`; paths `/unicast/c1/s0/live` & `/cam/realmonitor`), launched as a subprocess by `lib_manager.py` when `--image-rtp`. The `format=I420` cap is load-bearing (RGB→4:4:4 breaks baseline H.264 → corrupt output). The server is low-latency (verified via a `gst-launch` client); OpenCV+FFMPEG clients add ~2 s of their own RTSP buffering, so use a GStreamer client (`appsink sync=false drop=true max-buffers=1`) for low latency.
+**Command protocol (JSON over UDP):** every packet is `{"type": <str>, "time": <float>, ...}`.
+- Jetson→host: `move {vx,vy}`, `relative_move {dp,dt,space}`, `zoom_to {target}`, `center_and_zoom {dp,dt,zoom_target,...}`, `save_home`, `go_home`, `stop_all`, and `ping` (heartbeat).
+- host→Jetson: `pose {pan,tilt,zoom,timestamp}` at 20 Hz.
+- **Scene/session fields** (optional, read off *any* packet — carried on the heartbeat): `scene` (int, from the Jetson's `sim.scene` config; `0`/absent ⇒ no scene) selects a `scenes.py` trajectory; `session` (per-Jetson-run token) re-arms playback. `_scene_loop` plays the requested scene **once per new session**, `scene_start_delay_s` after Isaac loads — so quit Jetson → change `sim.scene` → re-run replays it. NOTE: the in-repo controller does **not** inject `scene`/`session`; the host *supports* them and the live Jetson integration adds them to the heartbeat.
+
+**Video (RTSP) + realism effects:** `simulation/libraries/ros_image_to_rtp_lib.py` serves H.264 over RTSP via `GstRtspServer` (port `RTSP_PORT=8554`; paths `/unicast/c1/s0/live` & `/cam/realmonitor`), launched as a subprocess by `lib_manager.py` when `--image-rtp`. The `format=I420` cap is load-bearing (RGB→4:4:4 breaks baseline H.264 → corrupt output). The server is low-latency (verified via a `gst-launch` client); OpenCV+FFMPEG clients add ~2 s of their own RTSP buffering, so use a GStreamer client (`appsink sync=false drop=true max-buffers=1`) for low latency. Before encoding, a configurable `FrameEffects` layer (the `EFFECTS` / `SpriteKind` dataclasses at the top of the file) adds realism: a **zoom-refocus blur** (Gaussian, keyed to `/isaac_core/zoom` changes, peaks ~0.8 s and clears by `blur_time`=2 s) and **drifting sprites** — small fast flies (static PNGs from `pics/`, 0–2 on screen) and bigger slower **animated** birds (GIFs from `gifs/`, frames played back as wing-flaps, 0–1 on screen at ~half the fly rate).
 
 **Coordinate systems used throughout:**
 - WGS84 (lat/lon/alt) — external input
@@ -113,4 +120,4 @@ RTP_VIDEO_PORT = 5004   # legacy, unused
 RTP_META_PORT  = 5005   # legacy, unused
 ```
 
-PTZ UDP ports: host `PTZSim` binds **5005** (commands in); Jetson `PTZSimController` binds **5006** (pose in). Pose is returned reply-to-sender on the host's command socket (NAT/VPN-aware).
+PTZ UDP ports: host `PTZSim` binds **5005** (commands in); Jetson `PTZSimController` binds **5006** (pose in). Pose is returned reply-to-sender on the host's command socket (NAT/VPN-aware). Scene playback sends the target drone to Isaac on **33335** (`scenes.DRONE_UDP_PORT`).
