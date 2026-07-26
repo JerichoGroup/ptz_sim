@@ -1,0 +1,205 @@
+# =============================================================================
+#  PTZ simulator scene definitions
+# =============================================================================
+#
+#  A *scene* flies a simulated target drone through a trajectory so the Jetson's
+#  tracker has something to lock onto. Pick a scene by number from the Jetson
+#  config (`sim.scene`); `ptz_sim` plays it once, `scene_start_delay_s` after
+#  Isaac Sim finishes loading.
+#
+#  Edit this file to add / tweak scenes — no Python needed. `scenes.py` loads it
+#  at runtime.
+#
+# -----------------------------------------------------------------------------
+#  CAMERA START (the PTZ camera look-point — build scenes AROUND this)
+# -----------------------------------------------------------------------------
+#  Set in ptz_sim.py `_init_camera_position`:
+#       lat = 32.20647   lon = 35.29034   alt = 540.0   yaw = 90 deg
+#
+#  The target drone ALSO spawns at this point (see `start` below), so the
+#  relative moves (right_left / forward_backward / up_down) are offsets measured
+#  from the camera look-point. The absolute `to_point` orbits below are circles
+#  centred on this exact lat/lon — change the camera start and regenerate them.
+# -----------------------------------------------------------------------------
+
+
+# Where the target drone is spawned. Defaults to the camera look-point so every
+# scene begins centered in view.
+start:
+  lat: 32.20647
+  lon: 35.29034
+  alt: 540.0
+  roll_d: 0.0
+  pitch_d: 0.0
+  yaw_d: 0.0
+
+# Base time unit (seconds), kept for reference.
+time_for_fifty: 2.0
+
+
+# -----------------------------------------------------------------------------
+#  MOVE TYPES (each entry in a scene's `moves:` list is one of these)
+# -----------------------------------------------------------------------------
+#  right_left        distance_m  duration_s     +right  / -left   (relative)
+#  forward_backward  distance_m  duration_s     +toward / -away   (relative)
+#  up_down           distance_m  duration_s     +up     / -down   (relative)
+#  wait              duration_s                 hold position
+#  to_point          lat lon alt [yaw_d roll_d pitch_d] duration_s  (absolute LLA)
+#
+#  Distances are metres; durations are seconds. Moves run in order and each one
+#  blocks for its `duration_s`, so total scene time is the sum of the durations.
+# -----------------------------------------------------------------------------
+#
+#  The 5 scenes below all follow the same arc, with varied size/shape/direction:
+#    climb ~60m above the camera -> fly away -> box in the air ->
+#    orbit the camera as an octagon/decagon -> return toward the camera ->
+#    descend back down to the camera.
+# -----------------------------------------------------------------------------
+
+
+scenes:
+
+  # Scene 1 — climb 60m, fly away, box, octagon orbit (CCW), return & descend.
+  1:
+    description: "Away 200m, box 80m, octagon orbit r150 @ 600.0m, then down to camera."
+    moves:
+      # 1) climb to ~60m above the camera
+      - { type: up_down,          distance_m: 60.0, duration_s: 3.0 }
+      # 2) fly away from the camera
+      - { type: forward_backward, distance_m: -200.0, duration_s: 4.0 }
+      # 3) box in the air (80m square)
+      - { type: right_left,       distance_m: 80.0,  duration_s: 2.5 }
+      - { type: forward_backward, distance_m: 80.0,  duration_s: 2.5 }
+      - { type: right_left,       distance_m: -80.0, duration_s: 2.5 }
+      - { type: forward_backward, distance_m: -80.0, duration_s: 2.5 }
+      # 4) orbit the camera as a 8-sided octagon (CCW) at radius 150m, alt 600.0m
+      - { type: to_point, lat: 32.207817, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207423, lon: 35.291466, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20647, lon: 35.291932, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205517, lon: 35.291466, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205123, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205517, lon: 35.289214, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20647, lon: 35.288748, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207423, lon: 35.289214, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207817, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      # 5) come back toward the camera (still up high)
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 600.0, duration_s: 4.0 }
+      # 6) come down to the camera
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 540.0, duration_s: 4.0 }
+
+  # Scene 2 — climb 60m, fly away, box, decagon orbit (CW), return & descend.
+  2:
+    description: "Away 250m, box 100m, decagon orbit r180 @ 600.0m, then down to camera."
+    moves:
+      # 1) climb to ~60m above the camera
+      - { type: up_down,          distance_m: 60.0, duration_s: 3.0 }
+      # 2) fly away from the camera
+      - { type: forward_backward, distance_m: -250.0, duration_s: 5.0 }
+      # 3) box in the air (100m square)
+      - { type: right_left,       distance_m: 100.0,  duration_s: 2.5 }
+      - { type: forward_backward, distance_m: 100.0,  duration_s: 2.5 }
+      - { type: right_left,       distance_m: -100.0, duration_s: 2.5 }
+      - { type: forward_backward, distance_m: -100.0, duration_s: 2.5 }
+      # 4) orbit the camera as a 10-sided decagon (CW) at radius 180m, alt 600.0m
+      - { type: to_point, lat: 32.208087, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207778, lon: 35.289217, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20697, lon: 35.288523, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20597, lon: 35.288523, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205162, lon: 35.289217, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.204853, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205162, lon: 35.291463, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20597, lon: 35.292157, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20697, lon: 35.292157, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207778, lon: 35.291463, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.208087, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      # 5) come back toward the camera (still up high)
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 600.0, duration_s: 4.0 }
+      # 6) come down to the camera
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 540.0, duration_s: 4.0 }
+
+  # Scene 3 — climb 55m, fly away, box, octagon orbit (CCW), return & descend.
+  3:
+    description: "Away 150m, box 60m, octagon orbit r120 @ 595.0m, then down to camera."
+    moves:
+      # 1) climb to ~55m above the camera
+      - { type: up_down,          distance_m: 55.0, duration_s: 3.0 }
+      # 2) fly away from the camera
+      - { type: forward_backward, distance_m: -150.0, duration_s: 3.0 }
+      # 3) box in the air (60m square)
+      - { type: right_left,       distance_m: 60.0,  duration_s: 2.5 }
+      - { type: forward_backward, distance_m: 60.0,  duration_s: 2.5 }
+      - { type: right_left,       distance_m: -60.0, duration_s: 2.5 }
+      - { type: forward_backward, distance_m: -60.0, duration_s: 2.5 }
+      # 4) orbit the camera as a 8-sided octagon (CCW) at radius 120m, alt 595.0m
+      - { type: to_point, lat: 32.207548, lon: 35.29034, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207232, lon: 35.291241, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20647, lon: 35.291614, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205708, lon: 35.291241, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205392, lon: 35.29034, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205708, lon: 35.289439, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20647, lon: 35.289066, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207232, lon: 35.289439, alt: 595.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207548, lon: 35.29034, alt: 595.0, duration_s: 1.6 }
+      # 5) come back toward the camera (still up high)
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 595.0, duration_s: 4.0 }
+      # 6) come down to the camera
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 550.0, duration_s: 4.0 }
+
+  # Scene 4 — climb 65m, fly away, box, decagon orbit (CW), return & descend.
+  4:
+    description: "Away 300m, box 120m, decagon orbit r200 @ 605.0m, then down to camera."
+    moves:
+      # 1) climb to ~65m above the camera
+      - { type: up_down,          distance_m: 65.0, duration_s: 3.0 }
+      # 2) fly away from the camera
+      - { type: forward_backward, distance_m: -300.0, duration_s: 6.0 }
+      # 3) box in the air (120m square)
+      - { type: right_left,       distance_m: 120.0,  duration_s: 2.5 }
+      - { type: forward_backward, distance_m: 120.0,  duration_s: 2.5 }
+      - { type: right_left,       distance_m: -120.0, duration_s: 2.5 }
+      - { type: forward_backward, distance_m: -120.0, duration_s: 2.5 }
+      # 4) orbit the camera as a 10-sided decagon (CW) at radius 200m, alt 605.0m
+      - { type: to_point, lat: 32.208267, lon: 35.29034, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207923, lon: 35.289092, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207025, lon: 35.288321, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205915, lon: 35.288321, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205017, lon: 35.289092, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.204673, lon: 35.29034, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205017, lon: 35.291588, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205915, lon: 35.292359, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207025, lon: 35.292359, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207923, lon: 35.291588, alt: 605.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.208267, lon: 35.29034, alt: 605.0, duration_s: 1.6 }
+      # 5) come back toward the camera (still up high)
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 605.0, duration_s: 4.0 }
+      # 6) come down to the camera
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 540.0, duration_s: 4.0 }
+
+  # Scene 5 — climb 60m, fly away, box, octagon orbit (CCW), return & descend.
+  5:
+    description: "Away 220m, box 90m, octagon orbit r160 @ 600.0m, then down to camera."
+    moves:
+      # 1) climb to ~60m above the camera
+      - { type: up_down,          distance_m: 60.0, duration_s: 3.0 }
+      # 2) fly away from the camera
+      - { type: forward_backward, distance_m: -220.0, duration_s: 4.4 }
+      # 3) box in the air (90m square)
+      - { type: right_left,       distance_m: 90.0,  duration_s: 2.5 }
+      - { type: forward_backward, distance_m: 90.0,  duration_s: 2.5 }
+      - { type: right_left,       distance_m: -90.0, duration_s: 2.5 }
+      - { type: forward_backward, distance_m: -90.0, duration_s: 2.5 }
+      # 4) orbit the camera as a 8-sided octagon (CCW) at radius 160m, alt 600.0m
+      - { type: to_point, lat: 32.207907, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207486, lon: 35.291541, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20647, lon: 35.292039, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205454, lon: 35.291541, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205033, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.205454, lon: 35.289139, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.20647, lon: 35.288641, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207486, lon: 35.289139, alt: 600.0, duration_s: 1.6 }
+      - { type: to_point, lat: 32.207907, lon: 35.29034, alt: 600.0, duration_s: 1.6 }
+      # 5) come back toward the camera (still up high)
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 600.0, duration_s: 4.0 }
+      # 6) come down to the camera
+      - { type: to_point, lat: 32.20647, lon: 35.29034, alt: 540.0, duration_s: 4.0 }
+
