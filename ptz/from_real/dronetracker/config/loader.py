@@ -12,7 +12,6 @@ working directory (preserve the "run from repo root" convention).
 Priority (highest wins): .env > config.yaml > dataclass defaults.
 """
 
-import os
 from pathlib import Path
 
 from dronetracker.config.schema import PipelineConfig, CameraConfig
@@ -63,6 +62,11 @@ def _apply_camera_overrides(cam: CameraConfig, yaml_data: dict, env: dict) -> Ca
         cam.user = section["user"]
     if section.get("password"):
         cam.password = section["password"]
+    # Full-URL overrides (used by the simulator, whose RTSP path differs).
+    if section.get("rtsp_main_override"):
+        cam.rtsp_main_override = section["rtsp_main_override"]
+    if section.get("rtsp_alt_override"):
+        cam.rtsp_alt_override = section["rtsp_alt_override"]
 
     # .env overrides (highest priority): CAM_IP, CAM_PORT, CAM_USER, CAM_PASS
     if "CAM_IP"   in env: cam.ip       = env["CAM_IP"]
@@ -100,16 +104,22 @@ def load_pipeline_config(
     # Each section maps to the matching dataclass field on PipelineConfig.
     # Only keys that already exist in the dataclass are applied (unknown keys ignored).
     section_map = {
-        "zoom":    cfg.zoom,
-        "pid":     cfg.pid,
-        "motion":  cfg.motion,
-        "tracker": cfg.tracker,
-        "yolo":    cfg.yolo,
-        "track":   cfg.track,
-        "frozen":  cfg.frozen,
-        "home":    cfg.home,
-        "cmd":     cfg.cmd,
-        "display": cfg.display,
+        "zoom":         cfg.zoom,
+        "pid":          cfg.pid,
+        "follow_pid":   cfg.follow_pid,
+        "motion":       cfg.motion,
+        "tracker":      cfg.tracker,
+        "yolo":         cfg.yolo,
+        "track":        cfg.track,
+        "frozen":       cfg.frozen,
+        "home":         cfg.home,
+        "cmd":          cfg.cmd,
+        "display":      cfg.display,
+        "track_filter": cfg.track_filter,
+        "auto_engage":  cfg.auto_engage,
+        "offline":      cfg.offline,
+        "storage":      cfg.storage,
+        "sim":          cfg.sim,
     }
     for section_name, obj in section_map.items():
         overrides = yaml.get(section_name, {})

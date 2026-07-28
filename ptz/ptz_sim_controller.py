@@ -28,22 +28,9 @@ keyboard wiring call exactly the same methods as for the real controller.
 __all__ = ["PTZSimController"]
 
 import json
-import math
 import socket
 import threading
 import time
-
-try:
-    from dronetracker.ptz.transform import _F_WIDE, _F_TELE, _SENSOR_W
-except ImportError:
-    # Fallback when norfair (pulled in by transform.py) is unavailable, e.g. a
-    # lightweight test env.  MUST stay identical to dronetracker/ptz/transform.py
-    # so the sim's vel_scale()/FOV math matches the real controller exactly.
-    _F_WIDE = 5.7       # mm, wide-end focal length
-    _F_TELE = 256.5     # mm, tele-end focal length  (~45x)
-    _SENSOR_W = 7.18    # mm, sensor width
-
-_FOV_WIDE = 2 * math.degrees(math.atan(_SENSOR_W / (2 * _F_WIDE)))
 
 
 class PTZSimController:
@@ -166,17 +153,16 @@ class PTZSimController:
     def zoom_track(self):
         self.zoom_to(self.zoom_track_pos)
 
-    # --- Velocity scale (FOV-relative, matches real controller) ------------
+    # --- Velocity scale (matches real controller) ---------------------------
 
     def vel_scale(self) -> float:
         """Pan/tilt velocity scale factor at the current zoom level.
 
-        Returns 1.0 at widest FOV, decreasing toward min_vel_scale at max zoom.
-        Matches the real PTZController.vel_scale() formula exactly.
+        Returns 1.0 at zoom_pos=0 (widest FOV), decreasing linearly toward
+        min_vel_scale at zoom_pos=1 (max zoom). Matches the real
+        PTZController.vel_scale() formula exactly (see controller.py).
         """
-        f = self.zoom_pos * (_F_TELE - _F_WIDE) + _F_WIDE
-        fov = 2 * math.degrees(math.atan(_SENSOR_W / (2 * f)))
-        return max(self.min_vel_scale, fov / _FOV_WIDE)
+        return max(self.min_vel_scale, 1.0 - self.zoom_pos * (1.0 - self.min_vel_scale))
 
     # --- Autofocus (no-op in simulation) -----------------------------------
 

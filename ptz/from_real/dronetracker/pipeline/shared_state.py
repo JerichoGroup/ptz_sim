@@ -1,8 +1,8 @@
 """Thread-safe shared state for the live PTZ pipeline.
 
 Replaces the 13 single-element list "mailbox" globals in the original
-``motion_ptz_pipeline.py`` with a single ``SharedState`` object whose
-named attributes map 1:1 to the original globals.
+live PTZ script with a single ``SharedState`` object whose named attributes
+map 1:1 to the original globals.
 
 Thread ownership:
   ``frame_lock``   — grab thread writes ``latest_frame``; detect + main read it.
@@ -26,7 +26,7 @@ class SharedState:
     """
 
     # ── Frame pipeline ────────────────────────────────────────────────────────
-    def __init__(self, initial_pid_kp: float = 0.6):
+    def __init__(self):
         self.frame_lock   = threading.Lock()
         self.stop_ev      = threading.Event()
         self.latest_frame = None          # guarded by frame_lock
@@ -36,16 +36,22 @@ class SharedState:
         self.state            = "IDLE"
         self.tracks           = []         # list of Norfair TrackedObject
         self.fps              = 0.0
-        self.pid_err          = (0.0, 0.0)
         self.locked_id        = None       # Norfair track ID currently locked
         self.yolo_box         = None       # (x1,y1,x2,y2,conf,label) or None
         self.yolo_boxes       = []         # list of (x1,y1,x2,y2,conf,label) for all YOLO dets; [] when none
+        self.yolo_box_followed = False     # True if yolo_box is the actively-followed target (red), else raw/fallback (cyan)
+        self.follow_aim       = None       # (px,py) camera-px predicted aim point for crosshair, or None
         self.request_shot     = False      # detect → main: take screenshot now
 
         # ── Main only (no lock needed) ────────────────────────────────────────
         self.recording        = False
         self.video_writer     = None
-        self.pid_gains        = [initial_pid_kp, 0.0, 0.0]   # [kp, ki, kd] for HUD display
+
+        # Segmented SSD storage (StorageManager or None when storage is disabled).
+        # Set once by the pipeline orchestrator before the threads start; the
+        # display thread drives rotation/quota and the detect thread appends
+        # JSON/crops.  The StorageManager carries its own internal lock.
+        self.storage          = None
 
         # ── Main → Detect (written by main, consumed by detect once per frame) ─
         self.cmd_lock         = threading.Lock()
@@ -71,7 +77,6 @@ class SharedState:
         state        = None,
         tracks       = None,
         fps          = None,
-        pid_err      = None,
         locked_id    = None,
         yolo_box     = None,
         request_shot = None,
@@ -87,7 +92,6 @@ class SharedState:
             if state        is not None: self.state        = state
             if tracks       is not None: self.tracks       = tracks
             if fps          is not None: self.fps          = fps
-            if pid_err      is not None: self.pid_err      = pid_err
             if locked_id    is not None: self.locked_id    = locked_id
             if yolo_box     is not None: self.yolo_box     = yolo_box
             if request_shot is not None: self.request_shot = request_shot
@@ -97,26 +101,33 @@ class SharedState:
         with self.det_lock:
             self.locked_id = None
 
-    def clear_yolo_box(self) -> None:
-        """Set yolo_box to None under det_lock."""
-        with self.det_lock:
-            self.yolo_box = None
-
     def set_yolo_boxes(self, dets: list) -> None:
         """Atomically store the full list of YOLO detections for display."""
         with self.det_lock:
             self.yolo_boxes = list(dets)
 
-    def clear_yolo_boxes(self) -> None:
-        """Clear yolo_boxes list under det_lock."""
-        with self.det_lock:
-            self.yolo_boxes = []
-
     def clear_yolo_all(self) -> None:
-        """Atomically clear both yolo_box and yolo_boxes in a single lock acquisition."""
+        """Atomically clear yolo_box, yolo_boxes, and the follow overlay state."""
         with self.det_lock:
-            self.yolo_box   = None
-            self.yolo_boxes = []
+            self.yolo_box          = None
+            self.yolo_boxes        = []
+            self.yolo_box_followed = False
+            self.follow_aim        = None
+
+    def set_track_overlay(self, yolo_box, followed: bool, aim) -> None:
+        """Atomically set the TRACK overlay in one lock acquisition.
+
+        Args:
+            yolo_box: the single box to draw (x1,y1,x2,y2,conf,label), or None.
+            followed: True if yolo_box is the actively-followed target (drawn red
+                      'FOLLOW'); False if it is a raw/fallback detection (cyan 'YOLO').
+            aim:      (px, py) camera-px predicted aim point for the crosshair, or
+                      None.  Shown even when yolo_box is None (follower coasting).
+        """
+        with self.det_lock:
+            self.yolo_box          = yolo_box
+            self.yolo_box_followed = followed
+            self.follow_aim        = aim
 
     # ── Detect-side snapshot (for main thread display) ─────────────────────────
 
@@ -130,10 +141,11 @@ class SharedState:
                 "state":         self.state,
                 "tracks":        list(self.tracks),
                 "fps":           self.fps,
-                "pid_err":       self.pid_err,
                 "locked_id":     self.locked_id,
                 "yolo_box":      self.yolo_box,
                 "yolo_boxes":    list(self.yolo_boxes),
+                "yolo_box_followed": self.yolo_box_followed,
+                "follow_aim":    self.follow_aim,
                 "request_shot":  self.request_shot,
             }
 

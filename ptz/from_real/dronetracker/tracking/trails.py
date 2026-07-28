@@ -114,9 +114,11 @@ def draw_tracks(frame, tracked_objects):
         x1, y1, x2, y2 = map(int, obj.last_detection.box)
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        score = getattr(obj, "drone_score", None)
+        label = f"ID {track_id}" if score is None else f"ID {track_id} {score:.2f}"
         cv2.putText(
             frame,
-            f"ID {track_id}",
+            label,
             (x1, y1 - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,

@@ -84,13 +84,19 @@ class RtspGrabber:
             print(f"[Cam] {fw}x{fh} @ {cap.get(cv2.CAP_PROP_FPS):.0f}fps")
 
             last_good = None
+            consecutive_dropped = 0
             while not stop_ev.is_set():
                 ret, frame = cap.read()
                 if not ret:
                     time.sleep(0.05)
                     break
                 if last_good is not None and is_garbled(frame, last_good):
-                    continue
+                    consecutive_dropped += 1
+                    if consecutive_dropped < 5:
+                        continue
+                    # 5+ consecutive drops → real scene change, not a codec
+                    # artifact.  Accept this frame as the new baseline.
+                consecutive_dropped = 0
                 last_good = frame
                 self._state.set_frame(frame)
 

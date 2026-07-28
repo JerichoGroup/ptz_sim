@@ -18,7 +18,7 @@ import threading
 import time
 import numpy as np
 
-from dronetracker.ptz.transform import _F_WIDE, _F_TELE, _SENSOR_W
+from dronetracker.ptz.transform import _F_WIDE, _SENSOR_W
 
 # ONVIF relative-move space that expresses translation as a fraction of the
 # current field-of-view — auto-handles zoom, no focal-length math needed.
@@ -66,18 +66,20 @@ class PTZController:
         # Runtime state
         self.ready         = False
         self.ptz           = None
-        self.imaging       = None
         self.token         = None
-        self.vstoken       = None
         self.zoom_pos      = 1.0
         self._zooming      = False
         self._rel_moving   = False   # True while a RelativeMove is in flight; gates re-entry
+        self._homing       = False   # True while go_home AbsoluteMove is in flight
         self._lock         = threading.Lock()
-        self._last_focus_t = 0.0
         self.connect_error = None
         self.home_pos      = None
         self.home_zoom     = None
         self._return_zoom  = None   # pre-lock zoom; set by center_and_zoom, consumed by _do_go_home
+
+        # ONVIF ImagingPort — used to disable continuous autofocus and trigger one-shot AF.
+        self._imaging = None
+        self._vs_token = None
 
         # Background pose cache — populated by _poll_pose daemon.
         self._pose_lock    = threading.Lock()
@@ -90,8 +92,14 @@ class PTZController:
         self._cmd_lock = threading.Lock()
         self._run      = True
 
-        threading.Thread(target=self._connect, args=(ip, port, user, passwd), daemon=True).start()
-        threading.Thread(target=self._mover, daemon=True).start()
+        # go_home cancellation: bumping the generation tells a running _do_go_home
+        # thread that a newer invocation has superseded it.
+        self._go_home_gen = 0
+
+        threading.Thread(target=self._connect, args=(ip, port, user, passwd),
+                         daemon=True, name="ptz-connect").start()
+        threading.Thread(target=self._mover,
+                         daemon=True, name="ptz-mover").start()
 
     # ── Connection ────────────────────────────────────────────────────────────
 
@@ -99,13 +107,27 @@ class PTZController:
         try:
             from onvif import ONVIFCamera
             cam          = ONVIFCamera(ip, port, user, passwd, adjust_time=True)
-            self.ptz     = cam.create_ptz_service()
-            media        = cam.create_media_service()
-            self.imaging = cam.create_imaging_service()
-            self.token   = media.GetProfiles()[0].token
-            vs = media.GetVideoSources()
-            if vs:
-                self.vstoken = vs[0].token
+            self.ptz   = cam.create_ptz_service()
+            media      = cam.create_media_service()
+            self.token = media.GetProfiles()[0].token
+            # Set autofocus to MANUAL — AF only fires when we explicitly call autofocus_once().
+            try:
+                self._imaging   = cam.create_imaging_service()
+                vs              = media.GetVideoSources()
+                self._vs_token  = vs[0].token
+                iset            = self._imaging.GetImagingSettings({'VideoSourceToken': self._vs_token})
+                if iset.Focus and iset.Focus.AutoFocusMode != "MANUAL":
+                    iset.Focus.AutoFocusMode = "MANUAL"
+                    self._imaging.SetImagingSettings({
+                        'VideoSourceToken': self._vs_token,
+                        'ImagingSettings': iset,
+                    })
+                    print("[PTZ] Autofocus set to MANUAL")
+                else:
+                    print("[PTZ] Autofocus already MANUAL")
+            except Exception as ae:
+                print(f"[PTZ] ImagingPort setup skipped ({ae}) — camera may still auto-focus")
+                self._imaging = None
             self._zoom_burst(-1.0, 8.0)   # force to physical wide-end stop
             self.zoom_pos = self.zoom_search_pos
             try:
@@ -121,18 +143,19 @@ class PTZController:
             except Exception as he:
                 print(f"[PTZ] Home auto-capture skipped ({he}); press H to save manually")
             self.ready = True
-            threading.Thread(target=self._poll_pose, daemon=True).start()
+            threading.Thread(target=self._poll_pose,
+                             daemon=True, name="ptz-poll-pose").start()
             print("[PTZ] Ready at minimum zoom")
         except Exception as e:
             self.connect_error = str(e)
             sep = "=" * 60
             print(f"\n{sep}")
             print(f"[PTZ] OFFLINE — {e}")
-            print(f"  All PTZ commands (zoom, pan, tilt) will silently do nothing.")
-            print(f"  Common causes:")
-            print(f"    • 'onvif-zeep' package not installed  →  pip install onvif-zeep")
+            print("  All PTZ commands (zoom, pan, tilt) will silently do nothing.")
+            print("  Common causes:")
+            print("    • 'onvif-zeep' package not installed  →  pip install onvif-zeep")
             print(f"    • Camera unreachable at {ip}:{port}   →  check LAN / cable")
-            print(f"    • Wrong credentials                  →  check user / passwd")
+            print("    • Wrong credentials                  →  check user / passwd")
             print(f"{sep}\n")
 
     # ── Internal zoom helpers ─────────────────────────────────────────────────
@@ -158,6 +181,7 @@ class PTZController:
             time.sleep(duration)   # lock released during sleep — poller stays responsive
             with self._lock:
                 self.ptz.Stop({'ProfileToken': self.token, 'PanTilt': False, 'Zoom': True})
+            self.autofocus_once()
         except Exception as e:
             print(f"[PTZ] zoom_burst error: {e}")
 
@@ -167,50 +191,17 @@ class PTZController:
         try:
             target    = float(np.clip(target, 0.0, 1.0))
             dist      = abs(target - self.zoom_pos)
-            if dist < 0.02:
+            if dist < 0.01:
                 return
             direction = 1.0 if target > self.zoom_pos else -1.0
             self._zoom_burst(direction, max(0.4, dist * self.zoom_full_s))
             self.zoom_pos = target
-            time.sleep(0.4)   # settle at new zoom
-            self._autofocus()
+
         except Exception as e:
             print(f"[PTZ] zoom error: {e}")
             self.zoom_pos = float(np.clip(target, 0.0, 1.0))
         finally:
             self._zooming = False
-
-    # ── Autofocus ─────────────────────────────────────────────────────────────
-
-    def _autofocus(self):
-        """Issue a one-shot autofocus command (blocking, ~50 ms)."""
-        if not self.imaging or not self.vstoken:
-            return
-        try:
-            req = self.imaging.create_type('SetImagingSettings')
-            req.VideoSourceToken = self.vstoken
-            req.ImagingSettings  = {'Focus': {'AutoFocusMode': 'AUTO'}}
-            with self._lock:
-                self.imaging.SetImagingSettings(req)
-            self._last_focus_t = time.time()
-        except Exception:
-            pass
-
-    def trigger_autofocus(self):
-        """Non-blocking periodic autofocus — called from the detect thread during TRACK."""
-        if not self.imaging or not self.vstoken:
-            return
-        def _go():
-            try:
-                req = self.imaging.create_type('SetImagingSettings')
-                req.VideoSourceToken = self.vstoken
-                req.ImagingSettings  = {'Focus': {'AutoFocusMode': 'AUTO'}}
-                with self._lock:
-                    self.imaging.SetImagingSettings(req)
-                self._last_focus_t = time.time()
-            except Exception:
-                pass
-        threading.Thread(target=_go, daemon=True).start()
 
     # ── Background pose poller ────────────────────────────────────────────────
 
@@ -220,7 +211,7 @@ class PTZController:
         Syncs ``zoom_pos`` from hardware truth whenever the camera reports Zoom,
         making ``vel_scale()`` and the FOV HUD accurate rather than dead-reckoned.
         """
-        while True:
+        while self._run:
             if self.ptz:
                 try:
                     with self._lock:
@@ -254,24 +245,63 @@ class PTZController:
     def zoom_to(self, t):
         """Non-blocking zoom to position ``t`` ∈ [0, 1]."""
         if not self._zooming and not self._rel_moving:
-            threading.Thread(target=self._do_zoom, args=(t,), daemon=True).start()
+            threading.Thread(target=self._do_zoom, args=(t,),
+                             daemon=True, name="ptz-zoom").start()
 
     def zoom_in(self):     self.zoom_to(min(self.zoom_max, self.zoom_pos + self.zoom_step))
     def zoom_out(self):    self.zoom_to(max(0.0,           self.zoom_pos - self.zoom_step))
-    def zoom_search(self): self.zoom_to(self.zoom_search_pos)
-    def zoom_track(self):  self.zoom_to(self.zoom_track_pos)
 
     # ── Velocity scale ────────────────────────────────────────────────────────
 
     def vel_scale(self) -> float:
         """Pan/tilt velocity scale factor at the current zoom level.
 
-        Returns 1.0 at the widest FOV and decreases as the FOV narrows, so a
-        given normalised-pixel error produces a consistent angular displacement.
+        Returns 1.0 at the widest position and decreases linearly to
+        ``min_vel_scale`` at maximum zoom, so arrow-key panning feels fast
+        when scanning and precise when zoomed in.
+
+        The previous FOV-ratio formula collapsed to the floor constant at
+        zoom_pos ≈ 0.07 (for the 45× lens), making all speeds indistinguishable.
+        This linear mapping spreads the range across the full zoom travel.
         """
-        f   = self.zoom_pos * (_F_TELE - _F_WIDE) + _F_WIDE
-        fov = 2 * math.degrees(math.atan(_SENSOR_W / (2 * f)))
-        return max(self.min_vel_scale, fov / _FOV_WIDE)
+        return max(self.min_vel_scale, 1.0 - self.zoom_pos * (1.0 - self.min_vel_scale))
+
+    # ── Autofocus ───────────────────────────────────────────────────────────────
+
+    def autofocus_once(self) -> None:
+        """Trigger a one-shot autofocus sweep, then return to MANUAL.
+
+        Toggles AutoFocusMode to AUTO for 0.5s then back to MANUAL.
+        Uses a 1-second lock timeout to avoid blocking the pipeline.
+        No-op if the ImagingPort was not set up in _connect().
+        """
+        if not self._imaging:
+            return
+        if not self._lock.acquire(timeout=1.0):
+            print("[PTZ] autofocus_once: lock timeout — skipping")
+            return
+        try:
+            iset = self._imaging.GetImagingSettings({'VideoSourceToken': self._vs_token})
+            iset.Focus.AutoFocusMode = 'AUTO'
+            self._imaging.SetImagingSettings({
+                'VideoSourceToken': self._vs_token,
+                'ImagingSettings': iset,
+            })
+        except Exception as e:
+            print(f"[PTZ] autofocus_once error: {e}")
+            return
+        finally:
+            self._lock.release()
+        time.sleep(0.5)
+        with self._lock:
+            try:
+                iset.Focus.AutoFocusMode = 'MANUAL'
+                self._imaging.SetImagingSettings({
+                    'VideoSourceToken': self._vs_token,
+                    'ImagingSettings': iset,
+                })
+            except Exception as e:
+                print(f"[PTZ] autofocus_once restore error: {e}")
 
     # ── Pan/tilt command coalescing ───────────────────────────────────────────
 
@@ -288,55 +318,6 @@ class PTZController:
         with self._cmd_lock:
             self._cmd_vel = (float(vx), float(vy))
             self._cmd_t   = time.time()
-
-    pid_move = move   # alias so old call sites still work
-
-    def relative_move(self, delta_pan, delta_tilt, space=None):
-        """Issue a single ONVIF RelativeMove for precise one-shot pan/tilt correction.
-
-        Non-blocking: fires in a daemon thread.
-        Gated by ``_rel_moving`` so rapid per-frame calls don't flood the
-        camera — each call returns early until the prior move + settle finishes.
-
-        Args:
-            delta_pan:   Pan displacement in ONVIF units.
-            delta_tilt:  Tilt displacement in ONVIF units.
-            space:       Optional ONVIF PanTilt space URI.  Pass
-                         ``TRANSLATION_SPACE_FOV`` for FoV-fraction space.
-        """
-        if not self.ready or self._zooming or self._rel_moving:
-            return
-        # Cancel pending coalesced velocity so the mover doesn't issue a
-        # ContinuousMove that cancels this RelativeMove during CMD_TTL.
-        with self._cmd_lock:
-            self._cmd_vel = (0.0, 0.0)
-            self._cmd_t   = 0.0
-        self._rel_moving = True
-        def _go():
-            try:
-                if not self.ptz:
-                    return
-                req = self.ptz.create_type('RelativeMove')
-                req.ProfileToken = self.token
-                pt = {'x': float(delta_pan), 'y': float(delta_tilt)}
-                if space:
-                    pt['space'] = space
-                req.Translation = {
-                    'PanTilt': pt,
-                    'Zoom':    {'x': 0.0},
-                }
-                req.Speed = {
-                    'PanTilt': {'x': 1.0, 'y': 1.0},
-                    'Zoom':    {'x': 1.0},
-                }
-                with self._lock:
-                    self.ptz.RelativeMove(req)
-                time.sleep(0.5)   # wait for camera to mechanically settle
-            except Exception as e:
-                print(f"[PTZ] relative_move error: {e}")
-            finally:
-                self._rel_moving = False
-        threading.Thread(target=_go, daemon=True).start()
 
     def center_and_zoom(self, delta_pan, delta_tilt, zoom_target,
                         space=None, parallel=True):
@@ -387,25 +368,18 @@ class PTZController:
                 with self._lock:
                     self.ptz.RelativeMove(req)
                 # ── Zoom ContinuousMove ───────────────────────────────────────
-                # ctx.settle_s in _step_track gates autofocus timing, so no
-                # extra sleep is needed here — clearing the flags promptly
-                # lets the detect loop resume and check the timer itself.
                 if not parallel:
                     time.sleep(0.6)   # let pan/tilt complete first (sequential mode)
                 if zoom_dur > 0.0:
                     self._zoom_burst(zoom_dir, zoom_dur, zoom_only=True)
                     with self._pose_lock:
                         self.zoom_pos = float(np.clip(zoom_target, 0.0, 1.0))
-                # Autofocus once after lock-on zoom (mirrors _do_zoom).
-                # Fires unconditionally so AF runs even when zoom was skipped (dist<0.02).
-                # _step_track Phase A no longer issues a second trigger.
-                self._autofocus()
             except Exception as e:
                 print(f"[PTZ] center_and_zoom error: {e}")
             finally:
                 self._rel_moving = False
                 self._zooming    = False
-        threading.Thread(target=_go, daemon=True).start()
+        threading.Thread(target=_go, daemon=True, name="ptz-center-zoom").start()
         return True
 
     def _mover(self):
@@ -422,13 +396,11 @@ class PTZController:
             stale = (vx == 0.0 and vy == 0.0) or age > self.cmd_ttl
             if not self.ready or not self.ptz or self._zooming or stale:
                 if moving:
-                    if self._rel_moving:
-                        # A RelativeMove is in flight.  The prior ContinuousMove was
-                        # already cancelled by the camera when the RelativeMove started,
-                        # so there is nothing to stop on the pan/tilt axis.  Sending
-                        # Stop(PanTilt=False, Zoom=False) at 25 Hz is a degenerate
-                        # no-op at best; on some firmware it cancels motion regardless
-                        # of the field values.  Clear the local flag and skip the call.
+                    if self._rel_moving or self._homing:
+                        # A RelativeMove or go_home AbsoluteMove is in flight.
+                        # The prior ContinuousMove was already cancelled by the camera
+                        # when the absolute/relative move started, so issuing Stop here
+                        # would cancel that in-flight move — don't do it.
                         moving = False
                     else:
                         try:
@@ -474,28 +446,42 @@ class PTZController:
             print(f"[PTZ] save_home error: {e}")
 
     def go_home(self):
-        """Non-blocking: slew back to saved home pan/tilt then zoom to saved home zoom."""
-        if not self._zooming and not self._rel_moving:
-            threading.Thread(target=self._do_go_home, daemon=True).start()
+        """Non-blocking: slew back to saved home pan/tilt then zoom to saved home zoom.
 
-    def _restore_zoom(self, target_zoom):
-        """Drive zoom to target_zoom; up to 3 correction attempts using _poll_pose feedback."""
-        zoom_tol = 0.03
+        Cancels any currently-running go_home by incrementing the generation
+        counter — the old thread detects the mismatch and exits early without
+        clearing ``_zooming``, so the new thread owns that flag.
+        """
+        self._homing = True   # set synchronously so _mover sees it before AbsoluteMove fires
+        self._go_home_gen += 1
+        my_gen = self._go_home_gen
+        threading.Thread(target=self._do_go_home, args=(my_gen,),
+                         daemon=True, name="ptz-go-home").start()
+
+    def _restore_zoom(self, target_zoom, gen):
+        """Drive zoom to target_zoom; up to 3 correction attempts using _poll_pose feedback.
+
+        Exits early if superseded by a newer go_home call (gen mismatch).
+        """
+        zoom_tol = 0.01
         for attempt in range(3):
+            if self._go_home_gen != gen:
+                return   # superseded
             dz = target_zoom - self.zoom_pos
             if abs(dz) <= zoom_tol:
                 print(f"[PTZ] zoom at {self.zoom_pos:.3f} (target {target_zoom:.3f}) ✓")
                 break
             direction = 1.0 if dz > 0 else -1.0
-            burst_s = max(0.3, abs(dz) * self.zoom_full_s)
+            burst_s = max(0.4, abs(dz) * self.zoom_full_s)
             print(f"[PTZ] zoom restore attempt {attempt + 1}: dz={dz:.3f}  burst={burst_s:.2f}s")
             self._zoom_burst(direction, burst_s)
-            time.sleep(0.2)   # let _poll_pose sync zoom_pos after motor stops
+
         else:
             print(f"[PTZ] zoom restore ended at {self.zoom_pos:.3f} (target {target_zoom:.3f})")
         self.zoom_pos = target_zoom   # reconcile internal state to intended target
 
-    def _do_go_home(self):
+    def _do_go_home(self, gen):
+        """Slew to saved home position and zoom.  Exits early if superseded (gen mismatch)."""
         self._zooming = True
         try:
             if self.ptz:
@@ -505,22 +491,31 @@ class PTZController:
                                        'PanTilt': True, 'Zoom': False})
                 except Exception:
                     pass
+            if self._go_home_gen != gen:
+                return   # superseded before we even started slewing
             if self.ptz and self.home_pos is not None:
-                self._return_to(self.home_pos[0], self.home_pos[1])
+                self._return_to(self.home_pos[0], self.home_pos[1], gen)
+                if self._go_home_gen != gen:
+                    return
                 target_zoom = (
                     self._return_zoom if self._return_zoom is not None
                     else self.home_zoom if self.home_zoom is not None
                     else self.zoom_search_pos
                 )
-                self._restore_zoom(target_zoom)
+                self._restore_zoom(target_zoom, gen)
+                if self._go_home_gen != gen:
+                    return
                 self._return_zoom = None   # consumed; next go_home falls back to home_zoom
             else:
                 print("[PTZ] go_home: no home saved; staying at current position/zoom")
-            self._autofocus()
         except Exception as e:
             print(f"[PTZ] go_home error: {e}")
         finally:
-            self._zooming = False
+            # Only clear flags if we are still the active generation.
+            # A superseded thread must NOT clear them — the newer thread owns the flags.
+            if self._go_home_gen == gen:
+                self._zooming = False
+                self._homing  = False
 
     def _absolute_move(self, pan, tilt) -> bool:
         """Issue an AbsoluteMove to (pan, tilt) at full speed.
@@ -548,12 +543,13 @@ class PTZController:
                     print(f"[PTZ] AbsoluteMove failed: {e}")
         return False
 
-    def _return_to(self, pan_target, tilt_target):
+    def _return_to(self, pan_target, tilt_target, gen):
         """Slew to (pan_target, tilt_target) and wait for physical arrival.
 
         Uses AbsoluteMove for a firmware-driven slew at full speed; falls back to
         an iterative RelativeMove loop if AbsoluteMove is not supported.
         Holds ``_zooming=True`` throughout so the detect thread skips frames.
+        Exits early if superseded by a newer go_home call (gen mismatch).
         """
         if not self.ptz:
             return
@@ -562,6 +558,8 @@ class PTZController:
 
         if self._absolute_move(pan_target, tilt_target):
             while time.time() < deadline:
+                if self._go_home_gen != gen:
+                    return   # superseded
                 try:
                     with self._lock:
                         status = self.ptz.GetStatus({'ProfileToken': self.token})
@@ -578,6 +576,8 @@ class PTZController:
                 print("[PTZ] go_home: timed out — stopping wherever camera is")
         else:
             while time.time() < deadline:
+                if self._go_home_gen != gen:
+                    return   # superseded
                 try:
                     with self._lock:
                         status = self.ptz.GetStatus({'ProfileToken': self.token})

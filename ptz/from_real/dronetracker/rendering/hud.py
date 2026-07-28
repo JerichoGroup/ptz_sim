@@ -6,9 +6,8 @@
 
 __all__ = ["HudState", "draw_hud", "STATE_COL"]
 
-import math
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Optional
 
 
 STATE_COL = {
@@ -22,21 +21,21 @@ _DEFAULT_COL = (200, 200, 200)
 @dataclass
 class HudState:
     """Snapshot of all information the HUD needs; built by the display thread."""
-    state:       str
-    locked_id:   Optional[int]
-    dfps:        float
-    det_fps:     float
-    zoom_pos:    float
-    focal_mm:    float
-    fov_deg:     float
-    pid_err:     Tuple[float, float]
-    pid_kp:      float
-    yolo_active: bool
-    cam_w:       int
-    cam_h:       int
-    recording:   bool
-    ptz_ready:   bool
-    ptz_error:   Optional[str] = field(default=None)
+    state:        str
+    locked_id:    Optional[int]
+    dfps:         float
+    det_fps:      float
+    zoom_pos:     float
+    focal_mm:     float
+    fov_deg:      float
+    yolo_active:  bool
+    cam_w:        int
+    cam_h:        int
+    recording:    bool
+    ptz_ready:    bool
+    thread_count: int              = 0
+    ptz_error:    Optional[str]    = field(default=None)
+    auto_engage:  bool             = False   # auto IDLE->TRACK ("auto-hunt") armed
 
 
 def draw_hud(disp, hud: HudState) -> None:
@@ -47,21 +46,19 @@ def draw_hud(disp, hud: HudState) -> None:
         hud:  Snapshot of current pipeline state.
     """
     import cv2   # local import so the module is importable without cv2 on the test runner
-    import numpy as np
 
     h, w = disp.shape[:2]
     col  = STATE_COL.get(hud.state, _DEFAULT_COL)
-    ex, ey = hud.pid_err
 
     lock_str = f"  ID={hud.locked_id}" if hud.locked_id is not None else ""
+    auto_str = "  [AUTO]" if (hud.auto_engage and hud.state == "IDLE") else ""
     lines = [
-        f"STATE  : {hud.state}{lock_str}",
+        f"STATE  : {hud.state}{lock_str}{auto_str}",
         f"FPS    : disp {hud.dfps:.0f}  det {hud.det_fps:.0f}",
         f"Zoom   : {hud.zoom_pos:.2f}  ({hud.focal_mm:.0f}mm)  FOV {hud.fov_deg:.1f}°",
-        f"PID err: ex={ex:+.3f}  ey={ey:+.3f}",
-        f"PID Kp : {hud.pid_kp:.2f}",
         f"YOLO   : {'ACTIVE' if hud.yolo_active else 'idle'}",
         f"Source : {hud.cam_w}x{hud.cam_h}",
+        f"Threads: {hud.thread_count}",
     ]
     for i, txt in enumerate(lines):
         y = 28 + i * 26
@@ -94,14 +91,8 @@ def draw_hud(disp, hud: HudState) -> None:
     cv2.line(disp, (cx - 30, cy), (cx + 30, cy), (0, 255, 0), 1)
     cv2.line(disp, (cx, cy - 30), (cx, cy + 30), (0, 255, 0), 1)
 
-    if hud.state == "TRACK":
-        err_x = int(ex * w)
-        err_y = int(ey * h)
-        cv2.arrowedLine(disp, (cx, cy), (cx + err_x, cy + err_y),
-                        (0, 255, 255), 2, tipLength=0.3)
-
     hint = ("Q=quit  S=shot  V=rec  T/ENTER=lock+zoom  R=unlock+home"
-            "  H=save-home  Z/X=zoom  P/O=PID gain  Arrows=pan/tilt")
+            "  H=save-home  Z/X=zoom  Arrows=pan/tilt")
     cv2.putText(disp, hint, (10, h - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 2)
     cv2.putText(disp, hint, (10, h - 10),

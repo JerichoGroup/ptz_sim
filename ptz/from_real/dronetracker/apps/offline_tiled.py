@@ -4,8 +4,8 @@
 Splits each frame into overlapping tiles, runs YOLO on each, merges via NMS,
 then tracks with Norfair.  Writes an annotated video.
 
-Paths and thresholds are currently hard-coded below (same as the original
-tiled_tracking.py).  They will be migrated to config.yaml in a future pass.
+Paths and thresholds are currently hard-coded below.
+They will be migrated to config.yaml in a future pass.
 
 Usage:
     python dronetracker/apps/offline_tiled.py
@@ -17,65 +17,63 @@ Run in background for long videos:
 from norfair import Tracker
 from ultralytics import YOLO
 
-from utils.tiling import split_into_tiles
-from utils.nms import global_nms
-from utils.tracking import create_norfair_detections, draw_tracks
-
-from dronetracker.media.video import MP4_FOURCC
+from dronetracker.media.video import AVI_FOURCC
 from dronetracker.pipeline.offline import OfflineRunner
+from dronetracker.rendering.draw import draw_yolo_box
 
 # ── Config (will move to config.yaml in a future pass) ───────────────────────
-VIDEO_PATH  = "/home/guy/experiment_07_05/rgb-01/09_17.mp4"
-MODEL_PATH  = "/home/guy/dronesDS/DroneTracker/results/runs/detect/train-15/weights/best.pt"
-OUTPUT_PATH = "/home/guy/experiment_07_05/rgb-01/09_17_output.mp4"
+VIDEO_PATH  = "/home/guy/dronesDS/experiment_18_06/18_06_2026__11_15_recovered.mp4"
+MODEL_PATH  = "/home/guy/Downloads/yolo_training/yolo11s-p2-merged/weights/best.pt"
+OUTPUT_PATH = "/home/guy/dronesDS/experiment_18_06/11_15_355_400s_11s.avi"
+START_SEC       = 235.0
+END_SEC         = 240.0
 DEVICE          = "cuda"
-TILE_SIZE       = (640, 640)
 CONFIDENCE      = 0.25
-IOU_THRESHOLD   = 0.1
-SHOW_WINDOW     = True
+SHOW_WINDOW     = False
 
 
 def _build_runner() -> OfflineRunner:
     model = YOLO(MODEL_PATH)
+    class_names = model.names  # {idx: label}
 
+    # Norfair tracker is required by OfflineRunner but unused — YOLO's built-in
+    # ByteTrack (persist=True) handles tracking; detect_fn returns no detections.
     tracker = Tracker(
         distance_function="euclidean",
         distance_threshold=120,
-        hit_counter_max=30,
-        initialization_delay=2,
+        hit_counter_max=1,
+        initialization_delay=0,
     )
 
-    def detect_fn(frame):
-        tiles, coords = split_into_tiles(frame, TILE_SIZE)
-        all_boxes, all_scores, all_classes = [], [], []
+    _state = {"yolo_boxes": []}
 
-        for tile, (ox, oy) in zip(tiles, coords):
-            res = model.predict(tile, conf=CONFIDENCE,
-                                device=DEVICE, verbose=False)[0]
-            if res.boxes is None:
-                continue
+    def detect_fn(frame):
+        res = model.track(frame, persist=True, conf=CONFIDENCE,
+                          device=DEVICE, verbose=False)[0]
+        boxes = []
+        if res.boxes is not None and len(res.boxes):
             for box, score, cls in zip(
                 res.boxes.xyxy.cpu().numpy(),
                 res.boxes.conf.cpu().numpy(),
                 res.boxes.cls.cpu().numpy(),
             ):
                 x1, y1, x2, y2 = box
-                all_boxes.append([x1 + ox, y1 + oy, x2 + ox, y2 + oy])
-                all_scores.append(float(score))
-                all_classes.append(int(cls))
-
-        boxes, scores, _ = global_nms(
-            all_boxes, all_scores, all_classes, IOU_THRESHOLD)
-        return create_norfair_detections(boxes, scores)
+                boxes.append((x1, y1, x2, y2,
+                               float(score),
+                               class_names.get(int(cls), str(cls))))
+        _state["yolo_boxes"] = boxes
+        return []  # no Norfair detections
 
     def draw_fn(frame, tracked_objects):
-        return draw_tracks(frame, tracked_objects)
+        for yolo_box in _state["yolo_boxes"]:
+            draw_yolo_box(frame, yolo_box, sx=1.0, sy=1.0)
+        return frame
 
     return OfflineRunner(
         detect_fn   = detect_fn,
         tracker     = tracker,
         draw_fn     = draw_fn,
-        fourcc      = MP4_FOURCC,
+        fourcc      = AVI_FOURCC,
         show_window = SHOW_WINDOW,
     )
 
@@ -85,6 +83,8 @@ def main():
     runner.run(
         video_path  = VIDEO_PATH,
         output_path = OUTPUT_PATH,
+        start_sec   = START_SEC,
+        end_sec     = END_SEC,
         window_name = "Tiled YOLOv11 Tracking",
     )
 

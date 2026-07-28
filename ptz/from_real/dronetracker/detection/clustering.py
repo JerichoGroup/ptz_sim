@@ -12,13 +12,10 @@ The historical motion scripts each had their own copy of ``motion_to_detections`
 with slightly different behaviour.  This unified version supersedes all three by
 parameterising ``min_area`` and ``max_area``::
 
-    # mog2_tracker.py equivalent (no upper bound):
+    # offline motion / batch (no upper bound):
     dets = motion_to_detections(mask, min_area=2, max_area=float("inf"))
 
-    # motion_detection_and_tracker.py equivalent:
-    dets = motion_to_detections(mask, min_area=2, max_area=float("inf"))
-
-    # motion_ptz_pipeline.py equivalent (also stashes .area / .box):
+    # live PTZ (also stashes .area / .box for auto-zoom):
     dets = motion_to_detections(mask, min_area=2, max_area=float("inf"))
 """
 
@@ -115,6 +112,9 @@ def motion_to_detections(
     min_area:         float = 2.0,
     max_area:         float = float("inf"),
     cluster_distance: float = 80.0,
+    frame=None,
+    appearance_fn=None,
+    contrast_fn=None,
 ) -> list:
     """Convert a motion mask into a list of Norfair Detection objects.
 
@@ -126,11 +126,31 @@ def motion_to_detections(
         det.area  → float contour area
         det.box   → (x1, y1, x2, y2) integer bounding rect
 
+    When both ``frame`` and ``appearance_fn`` are supplied, an appearance
+    descriptor is also stashed for collision-robust data association:
+
+        det.embedding → appearance_fn(frame, det.box)  (may be None)
+
+    Leaving either ``None`` keeps the legacy behaviour exactly (no embedding
+    attribute set), so callers that don't use appearance — and the golden
+    characterisation test — are unaffected.
+
     Args:
         motion_mask:      uint8 binary mask (255 = motion).
         min_area:         Minimum blob area to consider.
         max_area:         Maximum blob area to consider (use inf for no cap).
         cluster_distance: Maximum centroid–centroid distance to merge blobs.
+        frame:            Optional source image (BGR or single-channel) the
+                          mask was computed from, for appearance extraction.
+        appearance_fn:    Optional ``(frame, box, motion_mask) -> descriptor | None``
+                          used to compute ``det.embedding`` (e.g. a closure over
+                          ``dronetracker.tracking.appearance.compute_descriptor``).
+                          Receives the same ``motion_mask`` so the descriptor can
+                          be restricted to the object's motion pixels.
+        contrast_fn:      Optional ``(frame, box, motion_mask) -> float | None``
+                          stashed as ``det.contrast`` (e.g. a closure over
+                          ``dronetracker.tracking.appearance.blob_contrast``) for
+                          sky/drift-track rejection by the track filter.
 
     Returns:
         List of ``norfair.Detection`` objects (empty if no blobs pass filters).
@@ -146,10 +166,21 @@ def motion_to_detections(
 
     kept = cluster_blobs(centroids_arr, areas_arr, cluster_distance)
 
+    use_appearance = frame is not None and appearance_fn is not None
+    use_contrast   = frame is not None and contrast_fn is not None
+
     detections = []
     for idx in kept:
         det      = Detection(points=np.array([centroids[idx]]))
         det.area = areas[idx]
         det.box  = boxes[idx]
+        if use_appearance:
+            # Pass the motion mask so the descriptor can be built over only the
+            # object's motion pixels (excludes background inside the box).
+            det.embedding = appearance_fn(frame, boxes[idx], motion_mask)
+        if use_contrast:
+            # Blob-vs-local-sky contrast — lets the track filter drop sky-like
+            # "drift" detections (near-zero contrast) vs real blobs (high).
+            det.contrast = contrast_fn(frame, boxes[idx], motion_mask)
         detections.append(det)
     return detections
