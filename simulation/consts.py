@@ -13,7 +13,7 @@ FOCAL_LENGTH = 22.7885            # mm, computed from FOV and sensor size
 
 
 # ========================== Cesium consts ============================ #
-TILESETS_HTTP_SERVER_URL = "http://192.168.30.152:8088"
+TILESETS_HTTP_SERVER_URL = "http://192.168.30.71:8088"
 
 
 # ===================== Distance sensor consts ======================== #
