@@ -1,912 +1,401 @@
-# Isaac Core 🌎📸
+# PTZ Camera Simulation — Isaac Sim ↔ Jetson
 
-A tool aimed for simulating camera image view from a real 3dTiles scanning of the relevant location from a gps and orientation inputs.
-<br>
-This can be used to simulate areal unmaned vehicles. 
-<br>
-This tool is based on NVIDIA's **Isaac Sim 2023** and includes ros2 integration
-<br>
-<img src="readme_images/isaac_core_example.png" alt="Logo" width="1000"/>
+This repo simulates a **real PTZ security camera** so the drone-tracking algorithm can be
+developed and tested without the physical camera.
 
----
+From the algorithm's point of view nothing changes: it still receives an **RTSP H.264 video
+stream** and still sends the **same pan / tilt / zoom commands** it would send to the real
+camera. The difference is that behind the scenes those commands move a virtual camera inside
+an **NVIDIA Isaac Sim** world, and the video is rendered rather than captured.
 
-## Table of Contents 📑
+Two machines are involved:
 
-1. [System Requirements️](#system-requirements)
-1. [Docker Workflow (Optional)](#docker-workflow-optional-)
-1. [Running the Simulation](#running-the-simulation-)
-1. [Using isaac_core_dev_kit](#Using-isaac_core_dev_kit)
-1. [Simulation Flags](#simulation-flags-)
-1. [Special configurations](#special-configurations-)
-1. [ROS2 input topics](#ros2-input-topics-)
-1. [ROS2 outputs topics](#ros2-outputs-topics-)  
-1. [Take pictures](#take-pictures-)
-1. [Auto completion in vscode](#auto-completion-in-vscode-)
-1. [Extension Overview](#extension-overview-)
-1. [Using Bbox](#using-bbox-)
-1. [Isaac Core Debugger](#isaac-core-debugger-)
-1. [Deleting cesium cache](#deleting-cesium-cache)
+| Machine | Nickname | Runs | Repo |
+|---|---|---|---|
+| Workstation with an NVIDIA GPU | **the sim stand** (host) | Isaac Sim + the PTZ command server + the RTSP video server | `ptz_sim` (this repo) |
+| NVIDIA Jetson | **the Jetson** | The real tracking pipeline (VMD + YOLO + PTZ control) | `DroneTracker`, branch `feature/ptz_sim` |
 
 ---
 
-## System Requirements🖥️
+## 1. How the communication works
 
-<details>
-<summary><strong>NVIDIA GPU — Driver 535+ recommended for Isaac Sim 2023.1+</strong></summary>
+There are **four** independent flows. Three of them cross the machine boundary, and one is
+internal to the sim stand.
 
-```bash
-sudo apt-get remove --purge '^nvidia-.*'
-sudo apt update
-sudo apt install nvidia-driver-535
-sudo reboot
-nvidia-smi
+```
+                    SIM STAND (host)                                    JETSON
+        ┌──────────────────────────────────────────┐          ┌──────────────────────────┐
+        │                                          │          │                          │
+        │   ptz/ptz_sim.py   (PTZSim)              │          │  sim_motion_ptz_pipeline │
+        │   binds UDP :5005  ◄─────────────────────┼──① cmds──┤  PTZSimController        │
+        │                    ──────────────────────┼──② pose──►  binds UDP :5006         │
+        │          │                               │          │            │             │
+        │          │ ROS 2 topics                   │          │            │ frames      │
+        │          ▼                               │          │            ▼             │
+        │   ┌──────────────────┐                   │          │      RtspGrabber         │
+        │   │    Isaac Sim     │  /isaac_core/     │          │            ▲             │
+        │   │  (virtual camera)│   gimbal, zoom    │          │            │             │
+        │   └──────────────────┘                   │          │            │             │
+        │          │ /isaac_core/image_rgb         │          │            │             │
+        │          ▼                               │          │            │             │
+        │   ros_image_to_rtp_lib (GStreamer)       │          │            │             │
+        │   RTSP server :8554  ────────────────────┼──③ video─┼────────────┘             │
+        │          ▲                               │          │                          │
+        │          │ ④ target drone UDP :33335     │          │                          │
+        │   ptz/scenes.py (UdpBot)                 │          │                          │
+        └──────────────────────────────────────────┘          └──────────────────────────┘
 ```
 
-</details>
+### ① Commands — Jetson → sim stand (UDP, JSON)
 
-<details>
-<summary><strong>Ubuntu 22.04 LTS or later</strong></summary>
+The Jetson sends one small JSON packet per command to **`sim.host_ip:5005`**. Every packet
+looks like `{"type": "<name>", "time": <unix-seconds>, ...}`:
 
-No additional setup required — just ensure you're running Ubuntu 22.04.
+| Command | Payload | Meaning |
+|---|---|---|
+| `move` | `vx`, `vy` | Continuous pan/tilt velocity (like ONVIF *ContinuousMove*). Re-sent while a key is held; expires after `cmd_ttl` (0.15 s) so the camera stops if packets stop. |
+| `relative_move` | `dp`, `dt`, `space` | One-shot nudge, in **fractions of the current field of view** (±1.0 = half the current HFoV). |
+| `center_and_zoom` | `dp`, `dt`, `zoom_target`, `space`, `parallel` | The lock-on move: centre the target **and** zoom in, together. This is the one the tracker actually uses. |
+| `zoom_to` | `target` | Absolute zoom, `0.0` = widest … `1.0` = full tele. |
+| `save_home` | – | Remember the current pose as "home". |
+| `go_home` | – | Slew back to the saved home pose and zoom. |
+| `stop_all` | – | Stop all motion. **Does not shut the simulator down** — the Jetson sends this on every quit, and Isaac Sim takes too long to start to throw it away. |
+| `ping` | `scene`, `session` | Heartbeat, every 1.5 s. See below. |
 
-</details>
+Because `dp`/`dt` are FoV fractions rather than fixed angles, a nudge automatically becomes
+finer as you zoom in — exactly how the real camera's `TranslationSpaceFov` behaves.
 
-<details>
-<summary><strong>Docker 20.10+ & Docker Compose v2 (and NVIDIA Container Toolkit)</strong></summary>
+### ② Pose — sim stand → Jetson (UDP, JSON, 20 Hz)
 
-Install Docker & Compose:
-```bash
-sudo apt install docker docker-compose-v2
+The sim replies `{"type":"pose","pan":…,"tilt":…,"zoom":…,"timestamp":…}` twenty times a
+second, so the Jetson always knows where the camera actually is (it drives the HUD and keeps
+the zoom value honest).
+
+The important design point: **the sim never initiates traffic to the Jetson.** It replies to
+the *source address of whatever packet it last received* ("reply-to-sender"), sent from the
+very same socket the commands arrived on. That's why:
+
+* there is **no Jetson IP to configure anywhere** — it works through NAT, a VPN, or the
+  plain USB link without changes;
+* the 1.5 s `ping` heartbeat matters even when nobody is touching the controls — it keeps
+  the return path fresh so pose keeps flowing while idle.
+
+If you ever have a directly routable setup and want to hard-code the target instead, set the
+`PTZ_JETSON_IP` env var on the sim stand.
+
+### ③ Video — sim stand → Jetson (RTSP / H.264 over TCP)
+
+Isaac Sim publishes rendered frames on the ROS 2 topic `/isaac_core/image_rgb`
+(1920×1080). `simulation/libraries/ros_image_to_rtp_lib.py` encodes them to H.264 with
+GStreamer and serves them over RTSP on **port 8554**, at **both** paths the real camera
+uses:
+
+```
+/unicast/c1/s0/live      ← the primary URL
+/cam/realmonitor         ← the fallback URL
 ```
 
-Install Vulkan & NVIDIA Container Toolkit:
-```bash
-sudo apt install vulkan-tools nvidia-container-toolkit
-```
+**The Jetson opens this connection**, so the return path is never a problem.
 
-</details>
+A real camera serves RTSP on the privileged port **554**, and Linux won't let a normal user
+bind anything below 1024. So the server binds 8554 and we redirect 554 → 8554 with one
+`iptables` rule (see [§2](#2-one-time-setup-on-the-sim-stand)). The payoff: the Jetson's
+config needs **no simulator-specific URL at all** — sim and real camera differ only by
+`camera.ip`.
 
-<details>
-<summary><strong>ROS 2 Humble — Installed automatically inside the base Docker image</strong></summary>
+Before encoding, a small **realism layer** is applied: a Gaussian *refocus blur* that ramps
+up and clears after each zoom change (mimicking the real lens hunting focus), plus drifting
+sprites — small fast "flies" and larger animated "birds" — so the detector sees the kind of
+clutter it meets in the field. Everything is tunable via the `EFFECTS` dataclass at the top
+of that file.
 
-Optional: install locally for development outside Docker.
+### ④ Target drone — internal to the sim stand (UDP :33335)
 
-Install ROS 2 Humble:
-```bash
-sudo apt update && sudo apt install locales
-sudo locale-gen en_US en_US.UTF-8
-sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-export LANG=en_US.UTF-8
+A *scene* flies a simulated target drone through a scripted trajectory so the tracker has
+something to lock onto. `ptz/scenes.py` sends the target's pose to Isaac Sim on UDP 33335.
 
-sudo apt install software-properties-common
-sudo add-apt-repository universe
-sudo apt update && sudo apt install curl -y
-sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+You choose the scene **from the Jetson**, via `sim.scene` in its `config.yaml`. The number
+rides along on the heartbeat, together with a `session` token that is regenerated every
+time the Jetson pipeline starts. The sim plays the requested scene **once per new session**,
+`PTZ_SCENE_DELAY_S` (default 20 s) after Isaac has loaded. Practical consequence:
 
-sudo apt update
-sudo apt install ros-humble-desktop
-```
+> Quit the Jetson pipeline → change `sim.scene` → run it again, and the scene replays.
+> **You never have to restart Isaac Sim to change or repeat a scene.**
 
-Install Isaac Sim ROS 2 workspace:
-```bash
-sudo apt install ros-humble-rmw-fastrtps-cpp ros-humble-rmw-cyclonedds-cpp python3-rosdep python3-rosinstall python3-rosinstall-generator python3-wstool build-essential python3-colcon-common-extensions ros-humble-vision-msgs
-git clone https://github.com/isaac-sim/IsaacSim-ros_workspaces.git ~/IsaacSim-ros_workspaces
-cd ~/IsaacSim-ros_workspaces/humble_ws
-rosdep install -i --from-path src --rosdistro humble -y
-colcon build
-echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
-```
+Registered scenes:
 
-Add to `~/.bashrc`:
-```bash
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export ROS_DOMAIN_ID=13
-source ~/IsaacSim-ros_workspaces/humble_ws/install/setup.bash
-```
+| `sim.scene` | What the target does |
+|---|---|
+| `0` | Nothing — no target is spawned. |
+| `1` | Repositions, then makes a long straight run away from the camera. |
+| `2` | Repositions, advances, then descends toward a fixed point. |
 
-</details>
+Add your own by writing a `scene_N(bot)` function and registering it in the `SCENES` dict in
+`ptz/scenes.py`.
 
-<details>
-<summary><strong>Isaac core custom ros2 interfaces</strong></summary>
+### Port summary
 
-Copy the files into the humble workspace in your home dir:
-```bash
-cp -r ./simulation/ros2_interfaces/* ~/IsaacSim-ros_workspaces/humble_ws/src/isaac_ros2_messages/
-```
-
-Rebuild the relevant package:
-```bash
-cd ~/IsaacSim-ros_workspaces/humble_ws/
-colcon build --packages-select isaac_ros2_messages
-source install/setup.bash 
-```
-
-Check that the interface is available:
-```bash
-ros2 interface show isaac_ros2_messages/msg/FrameBboxes 
-ros2 interface show isaac_ros2_messages/msg/Bbox 
-```
-
-</details>
-
-<details>
-<summary><strong>Setup Extensions</strong></summary>
-
-Make sure isaacsim_2023 is installed. You can download at:
-https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/download.html
-```bash
-mkdir -p ~/.local/share/ov/pkg/
-# mv isaac_sim-2023.1.1 ~/.local/share/ov/pkg/
-```
-Add to bashrc:
-```bash
-# ISAACSIM Aliases
-export ISAACSIM_PATH="/home/user/.local/share/ov/pkg/isaac_sim-2023.1.1"
-alias ISAACSIM_PYTHON="${ISAACSIM_PATH}/python.sh"
-alias ISAACSIM="${ISAACSIM_PATH}/isaac-sim.sh"
-alias move_ext='cp -r /home/user/clones/isaac_core_2023/extensions/* $ISAACSIM_PATH/exts/'
-```
-
-Modify Omniverse config file:
-```bash
-OMNI_CONFIG_FILE="$ISAACSIM_PATH/apps/omni.isaac.sim.python.kit"
-if [ -f "$OMNI_CONFIG_FILE" ]; then
-    echo "Updating Omniverse config file..."
-    if ! grep -q 'cesium.omniverse' "$OMNI_CONFIG_FILE"; then
-        echo -e '\n[dependencies]\n"cesium.omniverse" = {}\n"cesium.usd.plugins" = {}\n"omni.anim.curve" = {}' >> "$OMNI_CONFIG_FILE"
-    fi
-
-    if ! grep -q 'useFabricSceneDelegate' "$OMNI_CONFIG_FILE"; then
-        echo -e '\n[settings.app]\nuseFabricSceneDelegate = true' >> "$OMNI_CONFIG_FILE"
-    fi
-fi
-```
-
-Install in Isaac Sim GUI the extensions: `cesium`, `ros2 bridge`
-
-Then run:
-```bash
-cp -r ~/.local/share/ov/data/exts/v2/cesium.* "$ISAACSIM_PATH/exts"
-cp -r extensions/* $ISAACSIM_PATH/exts/
-```
-
-Install extensions dependencies:  
-```bash
-sudo apt install -y ros-humble-geographic-msgs
-```
-
-
-</details>
-
-<details>
-<summary><strong>install isaac python modules</strong></summary>
-
-```bash
-~/.local/share/ov/pkg/isaac_sim-2023.1.1/python.sh -m pip install pyproj transforms3d
-```
-
-</details>
+| Port | Protocol | Direction | Purpose |
+|---|---|---|---|
+| 5005 | UDP | Jetson → sim | PTZ commands |
+| 5006 | UDP | sim → Jetson | Pose replies (reply-to-sender) |
+| 554 → 8554 | TCP | Jetson → sim | RTSP video (554 redirected to 8554) |
+| 33335 | UDP | internal to sim | Target drone pose → Isaac Sim |
 
 ---
 
-## Docker Workflow (Optional) 🐳
+## 2. One-time setup on the sim stand
 
-<details>
-<summary>Architecture Overview</summary>
-
-### 1. Base Image (`build_base_image.sh`)
-- Starts from NVIDIA’s Isaac Sim 4.5 container.
-- Installs ROS 2 Humble and builds the workspace.
-- Launches Isaac Sim once to warm up caches.
-- Commits a warm-start image for faster future boots.
-
-### 2. Simulation Image (`build_simulation_image.sh`)
-- Builds on the base image.
-- Adds your extensions and ROS configuration.
-- Launches your scene and commits the container once extensions are initialized.
-
-</details>
-
-### Build Docker Images
-
-Step 1: Build the base image
-```bash
-./Docker/build_base_image.sh
-```
-Step 2: Build the simulation image with extensions
-```bash
-./Docker/build_simulation_image.sh
-```
-
----
-<details>
-<summary>what the repo does and how to develop in it</summary>
-
-Isaac Core provides a modular simulation framework built around Isaac Sim 2023.1.1 and ROS 2 Humble. It allows developers
-to launch custom USD scenes, inject optional components (cameras, sensors, vehicles), and stream data through ROS topics in real time.
-
-The simulation logic is centralized in `Sim_app.py`, which dynamically loads USD assets based on CLI flags
-and configures the scene with extensions, viewport settings, and sensor graphs. Optional modules like range sensors or ROS cameras are injected via a clean argument parser and resolved through `sim_utils.py`.
-
-USD assets are organized by type (maps, vehicles, cameras, publishers), and can be composed at runtime to build complex environments.
-The repo supports Cesium tilesets, and includes utilities for patching USD files or rewriting attributes dynamically.
-
-Development is designed to be flexible:
-- Add new USDs to the `Usd/` folder and reference them via `--usd_path`
-- Extend the simulation by adding new nodes to `Script_nodes/` or new extensions under `Extensions/`
-- Use `omniverse_utils.py` to manipulate the stage, set camera views, or inject references
-- Configure simulation behavior through constants in `sim_utils.py`, including sensor parameters and launch settings
-</details>
-
-
-## Running the Simulation 🚀
-
-### Run Inside Docker
+**Redirect the RTSP port** so the Jetson can use the standard camera URL. Run this once per
+boot (it does not survive a reboot):
 
 ```bash
-xhost +
-./run_docker.sh
+sudo iptables -t nat -A PREROUTING -p tcp --dport 554 -j REDIRECT --to-port 8554
 ```
 
-### Run Locally on Your Host
+Check it is there:
 
 ```bash
-ISAACSIM_PYTHON ./simulation/main_sim.py --usd-path $PWD/usd/maps/earth/earth.usda --com-ros
+sudo iptables -t nat -L PREROUTING -n --line-numbers | grep 8554
 ```
 
-## Using isaac_core_dev_kit
-The isaac_core_dev_kit package provides a modular interface for running, controlling, and capturing data from Isaac Sim - based simulation. It is designed to be used in other projects without needed to fork or branch the original isaac_core repo.
 <details>
-<summary><strong>Installation</strong></summary>
+<summary>Prefer not to touch iptables?</summary>
 
-From the repo's root:
+You can instead point the Jetson straight at port 8554 by setting these in the Jetson's
+`config.yaml`, but then the Jetson config is no longer identical to the real-camera one:
+
+```yaml
+camera:
+  rtsp_main_override: "rtsp://<SIM_IP>:8554/unicast/c1/s0/live"
+  rtsp_alt_override:  "rtsp://<SIM_IP>:8554/cam/realmonitor"
+```
+</details>
+
+**Install the Python packages** used by the dev-kit and the debug tools (once):
+
 ```bash
-cd ~/clones/isaac_core_2023
-pip install ./simulation/
+pip install ./simulation      # installs isaac_core_dev_kit
+pip install ./debugger        # installs the ros-sender / udp-sender GUI tools
 ```
 
-This Installs the package and makes the following modules available:
-```python
-from isaac_core_dev_kit.isaac_manager.host_isaac_manager import HostIsaacManager
-from isaac_core_dev_kit.isaac_manager.docker_isaac_manager import DockerIsaacManager
-from isaac_core_dev_kit.core_capture.video_capture import VideoCapture
-from isaac_core_dev_kit.core_capture.pose_capture import PoseCapture
-from isaac_core_dev_kit.core_capture.distance_capture import DistanceCapture
-from isaac_core_dev_kit.core_capture.bbox_capture import BboxCapture
-from isaac_core_dev_kit.udp.one_point_sender import OnePointSender
-from isaac_core_dev_kit.udp.orbit_sender import OrbitSender
-from isaac_core_dev_kit.udp.path_sender import PathSender
-import isaac_core_dev_kit.dev_utils as core_utils
-```
-</details>
+## 3. One-time setup on the Jetson
 
-<details>
-<summary><strong>isaac_manager</strong></summary>
+The `DroneTracker` repo has a helper that installs the correct **JetPack-matched** PyTorch
+plus the app dependencies. This matters: a plain `pip install torch` pulls an x86 wheel that
+reports a version but cannot see the GPU.
 
-The isaac_manger module provides a unified interface for launching and controlling Isaac Sim, either directly on the host machine or inside a docker container using the isaac_core simulation docker image.
-
-Class definitions:
-```python
-# This is the HostIsaacManager class definition and its attributes
-HostIsaacManager(
-    usd_path: str = "usd/maps/earth/earth.usda",
-    headless: bool = False,
-    com_ros: bool = False,
-    com_udp: bool = False,
-    distance_sensor: bool = False,
-    bbox_publisher: bool = False,
-    sat: bool = False,
-    rtp: bool = False,
-    show_isaac_logs: bool = False,
-    core_path: str = DEFAULT_CORE_PATH,
-    isaac_path: str = DEFAULT_ISAAC_PATH
-)
-
-# This is the DockerIsaacManager class definition and its attributes
-DockerIsaacManager(
-    usd_path: str = "usd/maps/earth/earth.usda",
-    headless: bool = False,
-    com_ros: bool = False,
-    com_udp: bool = False,
-    distance_sensor: bool = False,
-    bbox_publisher: bool = False,
-    sat: bool = False,
-    rtp: bool = False,
-    show_isaac_logs: bool = False,
-    core_path: str = DEFAULT_CORE_PATH,
-    compose_rel_path: str = DEFAULT_COMPOSE_REL_PATH
-)
-```
-Usage:
-```python
-from isaac_core_dev_kit.isaac_manager.host_isaac_manager import HostIsaacManager
-from isaac_core_dev_kit.isaac_manager.docker_isaac_manager import DockerIsaacManager
-
-# example use case:
-with HostIsaacManager(core_path=".", usd_path="./usd/maps/earth/earth.usda", com_udp=True, show_isaac_logs=False):
-  #do something
+```bash
+cd ~/clones/DroneTracker
+git checkout feature/ptz_sim
+./setup_jetson_env.sh          # add --yes to skip the prompts
 ```
 
-</details>
+Then check `config.yaml` on the Jetson:
 
-<details>
-<summary><strong>core_capture</strong></summary>
-
-The core_capture module contains a set of capture utilities designed to extract ros2 data from the simulation at runtime.
-Each capture class inherits from `BaseCapture`, which defines a consistent interface for initialization, starting, stopping, saving the data, and shutdown.
-
-Class definitions:
-```python
-# all capture classes gets a name (for the ros2 node) and a topic (to subscribe to)
-# for example:
-VideoCapture(
-    topic: str = IMAGE_PUBLISHER_TOPIC_NAME,
-    name: str = "video_capture_node"
-)
+```yaml
+camera:
+  ip: "<SIM_STAND_IP>"         # the sim stand — this is the only sim/real difference
+sim:
+  host_ip: "<SIM_STAND_IP>"
+  host_port:   5005
+  listen_port: 5006
+  scene: 0                     # 0 = no target, 1 or 2 = play that scene
+yolo:
+  model_path: "models/yolo26n.engine"   # must exist on the Jetson
 ```
 
-Usage:
-```python
-from isaac_core_dev_kit.core_capture.video_capture import VideoCapture
-from isaac_core_dev_kit.core_capture.pose_capture import PoseCapture
-from isaac_core_dev_kit.core_capture.distance_capture import DistanceCapture
-from isaac_core_dev_kit.core_capture.bbox_capture import BboxCapture
-
-# example use case:
-video_capture_node = VideoCapture()
-
-video_capture_node.spin()
-video_capture_node.start_capture()
-
-# run a scenario
-
-video_capture_node.stop_capture()
-video_capture_node.save_data_to("./video.mp4", 30)
-
-video_capture_node.shutdown()
-```
-
-</details>
-
-<details>
-<summary><strong>udp</strong></summary>
-
-The udp module provides a real-time communication utilities for publishing UDP control commands to the simulation.
-Each Sender class inherits from `BaseUDPSender`, which defines a consistent UDP interface, it defines the packet struct and payload convention, and methods to start publishing packets in a blocking or non-blocking manor. 
-
-Class definitions:
-```python
-# This is the OnePointSender class definition and its attributes
-OnePointSender(
-    lat: float,
-    lon: float,
-    alt: float,
-    roll: float,
-    pitch: float,
-    yaw: float,
-    udp_port: float = 33333,
-    send_rate_hz: float = 30,
-    broadcast: bool = True,
-    target_ip: str = "127.0.0.1"
-)
-
-# This is the OrbitSender class definition and its attributes
-OrbitSender(
-    center_lat: float,
-    center_lon: float,
-    radius_m: float,
-    height_m: float,
-    speed_mps: float,
-    duration_s: float,
-    roll_deg: float = 0,
-    pitch_deg: float = 0,
-    udp_port: int = 33333,
-    send_rate_hz: float = 30,
-    broadcast: bool = True,
-    target_ip: str = "127.0.0.1"
-)
-
-# This is the PathSender class definition and its attributes
-PathSender(
-    points: List[LLAPoint],
-    speed_mps: float,
-    roll_deg: float = 0,
-    pitch_deg: float = 0,
-    udp_port: int = 33333,
-    send_rate_hz: float = 30,
-    broadcast: bool = True,
-    target_ip: str = "127.0.0.1"
-)
-```
-
-Usage:
-```python
-from isaac_core_dev_kit.udp.one_point_sender import OnePointSender
-from isaac_core_dev_kit.udp.orbit_sender import OrbitSender
-from isaac_core_dev_kit.udp.path_sender import PathSender
-from isaac_core_dev_kit.udp.udp_utils import LLAPoint
-
-# example use case:
-point_sender = OnePointSender(lat=32.22481, lon=35.25621, alt=1000.0,
-                              roll=0.0, pitch=0.0, yaw=0.0,
-                              udp_port=33333, send_rate_hz=30, 
-                              broadcast=True, target_ip="127.0.0.1")
-
-point_sender.run(blocking=False)
-
-point_sender.join()
-
-point_sender.send_once(32.2245, 35.2563, 500.0, 0.0, 0.0, 0.0)  # all sender classes has a send_once method to send a single point 
-
-point_sender.close()
-```
-
-</details>
-
-<details>
-<summary><strong>dev_utils</strong></summary>
-
-The dev_utils module is a collection of utilities function that can help developers in any project.
-
-Usage:
-```python
-import isaac_core_dev_kit.dev_utils as core_utils
-
-# deletes the cesium cache on the local computer
-core_utils.delete_cesium_cache()
-
-# used to safely init or shutdown rclpy
-core_utils.safe_rclpy_init()
-core_utils.safe_rclpy_shutdown()
-
-# used to send a ros2 msg with new angels to set the cameras gimbal to
-core_utils.set_gimbal_angle(roll=0.0, pitch=-90.0, yaw=0.0)
-
-# used to capture the current frame from Isaac Sim, work with --sat flag
-core_utils.save_current_frame_to("./picture.png")
-```
-
-</details>
-
-<details>
-<summary><strong>full usage example</strong></summary>
-
-This is a use case example. The following code works like this: 
-1. imports the needed modules from the dev kit
-2. defines a CORE_PATH (if not running from the isaac_core_2023 repo) 
-3. initialize a ros2-IsaacSim env with deleting the cesium cache and init'ing rclpy
-4. starts a local IsaacSim session with HostIsaacManager
-5. initialize and start's a video_capture_node and a orbit_sender
-6. runs the orbit_sender once
-7. changes gimbal's angle mid run/flight
-8. run the orbit_sender another time
-9. stop's recording and saving the video
-10. cleaning up the video_capture_node and the orbit_sender
-
-```python
-from isaac_core_dev_kit.isaac_manager.host_isaac_manager import HostIsaacManager
-from isaac_core_dev_kit.udp.orbit_sender import OrbitSender
-from isaac_core_dev_kit.core_capture.video_capture import VideoCapture
-import isaac_core_dev_kit.dev_utils as core_utils
-
-CORE_PATH = "/home/user/clones/isaac_core_2023"
-
-core_utils.delete_cesium_cache()
-core_utils.safe_rclpy_init()
-
-with HostIsaacManager(core_path=CORE_PATH, com_udp=True, show_isaac_logs=False):
-
-    video_capture_node = VideoCapture()
-    orbit_sender = OrbitSender(center_lat=32.22481, center_lon=35.25621,
-                               radius_m=1000.0, height_m=1000.0,
-                               speed_mps=30.0, duration_s=50.0)
-
-    video_capture_node.spin()
-    video_capture_node.start_capture()
-    
-    orbit_sender.run(blocking=True)
-
-    core_utils.set_gimbal_angle(-45.0, 0.0, 0.0)
-    
-    orbit_sender.run(blocking=True)
-
-    video_capture_node.stop_capture()
-    video_capture_node.save_data_to("video.mp4", 30)
-
-    orbit_sender.close()
-    video_capture_node.shutdown()
-```
-
-</details>
+> A TensorRT `.engine` only loads on the exact TensorRT version that built it, so build
+> engines **on the Jetson** (`python scripts/export_engine.py`).
 
 ---
 
-## Simulation Flags 🚩
+## 4. Running the system
 
-| Flag                     | Description                                                         |
-|--------------------------|---------------------------------------------------------------------|
-| `--usd-path <file.usda>` | Load a specific USDA scene file                                     |
-| `--headless`             | Run Isaac Sim without GUI                                           |
-| `--com-ros`              | Expect lat, lon, alt, roll, pith, yaw inputs using ros              |
-| `--com-udp`              | Expect lat, lon, alt, roll, pith, yaw inputs using udp              |
-| `--distance-sensor`      | Add range sensor to simulation (output is on ros topic)             |
-| `--bbox-publisher`       | Publish bbox data for each object specified                         |
-| `--sat`                  | enables to capture current frames to and output path via a ros topic|
-| `--image-rtp`            | exports the image from ros over RTP                                 |
+Two terminals, two machines. **Start the sim stand first** — Isaac Sim takes ~15 s to load.
+
+### Step 1 — on the sim stand
+
+```bash
+cd ~/clones/ptz_sim
+ISAACSIM_PYTHON ./ptz/ptz_sim.py
+```
+
+You should see:
+
+```
+[Host] PTZSim listening on 0.0.0.0:5005
+[Host] Jetson pose target: reply-to-sender (source of received commands)
+IsaacSim loaded in 14.02 seconds!
+[Host] Isaac Sim started.
+[Host] Home saved: pan=0.00, tilt=0.00, zoom=0.00
+```
+
+The RTSP server's own log lives in a file, because it runs in a subprocess whose output is
+hidden by default. Watch it in a second terminal — this is the single most useful thing to
+look at when video misbehaves:
+
+```bash
+tail -f /tmp/ptz_sim_rtsp.log
+```
+
+Healthy output looks like this (`image_topic` = frames arriving from Isaac, `pushed` =
+frames going to a connected client):
+
+```
+[RTSP] Mounted at /unicast/c1/s0/live
+[RTSP] Mounted at /cam/realmonitor
+[RTSP] Server listening on :8554
+[RTSP] no client: image_topic=25.0 fps  pushed=0.0 fps
+[RTSP] Client connected — pipeline started
+[RTSP] client attached: image_topic=25.0 fps  pushed=25.0 fps
+```
+
+### Step 2 — on the Jetson
+
+```bash
+cd ~/clones/DroneTracker
+python3 ./sim_motion_ptz_pipeline.py
+```
+
+A window opens with the simulated camera view, and the tracker runs against it exactly as it
+would against the real camera.
+
+> Needs a real display. Over SSH, prefix with `DISPLAY=:0` to put the window on the Jetson's
+> attached monitor.
+
+### Other entry points
+
+| Where | Command | What it does |
+|---|---|---|
+| Jetson | `python3 ./run_live_ptz.py` | The **real camera** pipeline (unchanged by any of this). |
+| Sim stand | `python3 ptz/rtsp_test.py` | Just view the stream — handy for isolating video from the tracker. Add `--backend ffmpeg` to use the same decoder the Jetson uses. |
+| Sim stand | `python3 ptz/ptz_tui.py --host <SIM_IP>` | Drive the camera by keyboard without running the tracker. |
+| Sim stand | `python3 ptz/jetson_test_ptz_sim.py` | Fire a scripted sequence of PTZ commands. |
+
+### Keyboard controls (in the pipeline window)
+
+| Key | Action |
+|---|---|
+| `T` / `Enter` | Lock on to the selected target (IDLE → TRACK) |
+| `R` | Return to home pose |
+| `H` | Save the current pose as home |
+| Arrow keys | Pan / tilt (IDLE only) |
+| `Z` / `X` | Zoom in / out |
+| `V` | Start / stop recording |
+| `S` | Save a screenshot |
+| `Q` | Quit |
+
+### Shutting down
+
+Quit the Jetson pipeline with `Q` first, then stop the sim stand with `Ctrl-C`. The Jetson's
+`stop_all` deliberately does **not** stop the simulator, so you can restart the Jetson side
+as often as you like while Isaac Sim stays up.
 
 ---
 
-## Special configurations 🔧
-under simulation/consts.py you can change:
-```bash     
-GIMBAL_ROLL_DEG                 # gimbal roll angel
-GIMBAL_PITCH_DEG                # gimbal pitch angel
-GIMBAL_YAW_DEG                  # gimbal yaw angel
-RESOLUTION_WIDTH                # frame width resolution
-RESOLUTION_HEIGHT               # frame height resolution
-CAMERA_FOV                      # camera's FOV           
-FOCAL_LENGTH                    # camera's focal length
+## 5. Troubleshooting
 
-TILESETS_HTTP_SERVER_URL        # cesium server address
+### The Jetson prints `DESCRIBE failed: 503 Service Unavailable`
 
-LASER_MIN_RANGE                 # distance sensor min range
-LASER_MAX_RANGE                 # distance sensor max range
+The RTSP server is reachable but cannot serve video. Check `/tmp/ptz_sim_rtsp.log`:
 
-MAX_OUTPUTS_ROS_HRZ             # data topic publish frequency       
-GLOBAL_POSE_TOPIC_NAME          # global pose data topic name
-LASER_TOPIC_NAME                # distance sensor topic name
-BBOXES_TOPIC_NAME               # bbox data topic name
-IMAGE_PUBLISHER_TOPIC_NAME      # image rgb topic name
+* **`FATAL: could not bind RTSP port 8554`** — a **stale `lib_manager` from a previous run is
+  still holding the port**. This is the classic one: `lib_manager` is a subprocess of Isaac
+  Sim, and if Isaac is killed rather than exited cleanly it can be left behind, keeping 8554
+  bound. Your new server then serves nobody while the dead one answers the Jetson with 503.
 
-RTP_VIDEO_PORT                  # defines the port to export the frames over udp
-RTP_META_PORT                   # defines the port to export the metadata over udp
+  ```bash
+  ss -ltnp | grep 8554                              # see who holds it
+  pkill -9 -f 'ptz_sim/simulation/lib_manager'      # clear it
+  ```
 
-HOST_IP                         # defines the host ip to publish over udp from 
-```
+  `main_sim.py` now asks the kernel to kill `lib_manager` when Isaac Sim dies, so this should
+  not recur — but it is still the first thing to check.
 
-### Gimbal Angle (Reference Image)
+* **`WARNING: no frames from the image topic`** — the server is up but Isaac isn't delivering
+  frames, so there is nothing to encode. Confirm the camera is publishing:
 
-The gimbal angle is based on the following photo:
+  ```bash
+  ros2 topic hz /isaac_core/image_rgb
+  ```
 
-<img src="readme_images/gimbal_angle_example.png" alt="Gimbal Angle Reference" width="500"/>
+* **`image_topic=25 fps` but `no client` forever** — frames are fine and the Jetson never
+  actually reached *this* server. Almost always the stale-port case above.
 
-There is always a gimbal subscriber that is subscribed to `/isaac_core/gimbal` that updates the gimbal angel values while "in the air".
+### The Jetson prints `404 Not Found`
 
-The isaac sim expects msgs there with values for gimbal roll, pitch, yaw, and it update the gimbal live.
+The path is wrong. Only `/unicast/c1/s0/live` and `/cam/realmonitor` are mounted. Clear any
+`rtsp_main_override` / `rtsp_alt_override` in the Jetson's `config.yaml`.
 
-here is a bash command to publish a msg on a topic for manual usage (adjust the values):
-```bash
-ros2 topic pub /isaac_core/gimbal isaac_ros2_messages/msg/Gimbal "{roll: 0.0, pitch: 0.0, yaw: 0.0}"
-```
+### The Jetson prints `Connection refused` on port 554
 
----
+The `iptables` redirect isn't in place — see [§2](#2-one-time-setup-on-the-sim-stand). It is
+lost on reboot.
 
-## ROS2 input topics 📥
-These are the MAVRos topic the isaac sim would be subscribing to if you choose com-ros
+### Commands work but there's no video (or vice-versa)
 
-| Topic                                | Type                                | Description                                      |
-|--------------------------------------|-------------------------------------|--------------------------------------------------|
-| `/mavros/global_position/global`     | `sensor_msgs/NavSatFix`             | Read LLA from MAVRos                             |
-| `/mavros/local_position/pose`        | `geometry_msgs/PoseStamped`         | Read orientaion from MAVRos                      |
-| `/isaac_core/sat`                    | `isaac_ros2_messages/msg/SATOutput` | wait for an output path to save frame            |
-| `/isaac_core/gimbal`                 | `isaac_ros2_messages/msg/Gimbal`    | Read gimbal angels and adjust gimbal dynamically |
+They are completely independent flows: commands are UDP 5005, video is TCP 554/8554. A
+working scene playback proves only that the **command** path is healthy.
 
+### `CUDA initialization failure` / `no CUDA-capable device` on the Jetson
 
-------
+A non-Jetson PyTorch wheel got installed. Re-run `./setup_jetson_env.sh`; a correct install
+reports a `+cu126` version and passes the script's final `torch.cuda` check.
 
-## ROS2 outputs topics 📤
+### `[Storage] ERROR: could not create chunk dir: Permission denied`
 
-| Topic                                | Type                                 | Description                 |
-|--------------------------------------|--------------------------------------|-----------------------------|
-| `/isaac_core/global_pose`            | `geometry_msgs/GeoPoseStamped`       | Camera's global position (overriding quaternions with RPY, x=roll, y=pitch, z=yaw, w=not used)    |
-| `/isaac_core/distance_sensor`       | `sensor_msgs/Range`                  | Simulated laser range data  |
-| `/isaac_core/camera/image_rgb`       | `sensor_msgs/Image`                  | Camera feed from simulation |
-| `/isaac_core/bbox`                   | `isaac_ros2_messages/msg/FrameBboxes`| BBOX data per object        |
+Recording only — the tracker still runs. Give the Jetson user ownership of the storage path
+(`storage.base_dir` in `config.yaml`), e.g. `sudo chown -R $USER /mnt/ssd/dronetracker`.
 
+### Cesium tile errors on the sim stand
+
+Lines like `An unexpected error occurred when loading tile: curl: Couldn't connect to server`
+refer to the terrain tile server and are unrelated to PTZ or video. Safe to ignore.
 
 ---
 
-## Angles conventions
-The angles of roll, pitch, yaw expected for udp are of the conventions of NED coordinates and intrensic xyz eular angles.
-This means:
-+roll will turn the "nose" of the airplain (camera) to the right (right wing down, left wing up)
-+pitch will trurn the "nose" of the airplain (camera) up
-+yaw will trurn the "nose" of the airplain (camera) right
+## 6. Where things live
 
-This is true for gimbal angles as well.
+```
+ptz/
+  ptz_sim.py               Host entry point. UDP command server + gimbal/zoom
+                           publishing + pose replies + scene playback.
+  scenes.py                Target-drone trajectories (the SCENES registry).
+  ptz_sim_controller.py    Stand-alone copy of the Jetson-side controller, used only
+                           by the local debug tools below. The pipeline itself uses
+                           DroneTracker's own dronetracker/ptz/sim_controller.py.
+  ptz_tui.py               Keyboard controller.
+  rtsp_test.py             Stream viewer.
+  jetson_test_ptz_sim.py   Scripted command driver.
+  from_real/dronetracker/  Read-only copy of the real tracking repo, kept as the
+                           fidelity reference for the camera interface. Do not edit.
 
-Behind the scences isaac core uses ENU (this is because of cesium)
-We fix this distinction by converting NED rotations to ENU (But you don't need to take care of this).
-And mavros convts autmatically from NED to ENU
+simulation/
+  main_sim.py              Launches Isaac Sim and the lib_manager subprocess.
+  sim_app.py               Builds the scene, camera and OmniGraph wiring.
+  consts.py                Resolution, FoV, ROS topic names, RTSP port and paths.
+  lib_manager.py           Runs the simulation libraries (the RTSP server).
+  libraries/
+    ros_image_to_rtp_lib.py  ROS image → H.264 → RTSP, plus the realism effects.
+  script_nodes/            Python OmniGraph nodes (zoom, bbox, sensors).
 
-
-## Take pictures
-You can enable the take picture with the `--sat` flag
-
-Then the topic `/isaac_core/sat` will expect msg's that their content is a file path.
-
-If the isaac sim process have permission for that path it will save there a png of the current frame.
-
-here is a bash command to publish a msg on a topic for manual usage:
-```bash
-ros2 topic pub /isaac_core/sat isaac_ros2_messages/msg/SATOutput "{output_path: '<your path>'}"
+extensions/                Isaac Sim extensions (coordinate math, position input,
+                           sensor output).
+usd/                       Scenes, cameras, sensors and drone assets.
 ```
 
-
-
-## Auto completion in vscode 💡
-<details>
-<summary>Expand to show more on setup</summary>
-`.vscode` folder is unique for each machine depending on the extensions installed, in order to get the right folder follow those steps:
-
-1. Open isaac sim
-1. window
-1. Extensions
-1. Plus button for new extension
-1. New extension Template project (call it a random name)
-1. Copy .vscode folder from that project and paste it in this directory
-
-`app` - It is a folder link to the location of your *Omniverse Kit* based app.
-If `app` folder link doesn't exist or broken it can be created again. For better developer experience it is recommended to create a folder link named `app` to the *Omniverse Kit* app installed from *Omniverse Launcher*. Convenience script to use is included.
-
-Run:
-```
-./link_app.sh --path $ISAACSIM_PATH
-```
-
-Now reopen vscode in this folder an wait 30 seconds ~ for auto-completion.
-</details>
-
-
-## Extension Overview 🧩
-
-<details>
-
-<summary><strong>Extension Overview</strong></summary>
-
-The isaac core repo has some custom extension and nodes for isaac sim 2023.1.1
-
-### `omni.sim.math`
-
-<details>
-<summary><strong>Node: OgnSimGlobalPositionToLocalPosition</strong></summary>
-
-- **Purpose**: Converts global GPS coordinates and orientation (roll, pitch, yaw) into local ENU position and quaternion, all calculation are with ZYX angle notation.
-- **Inputs**:
-  - `global_position` — `[lat, lon, alt]` in degrees/meters (WGS84)
-  - `global_orientation` — `[roll, pitch, yaw]` in radians, ZYX
-  - `enu_reference` — `[lat, lon, alt]` reference point  
-  - `offset_roll/pitch/yaw` — degrees  
-- **Outputs**:
-  - `local_position` — `[x, y, z]` in meters in ENU system around reference
-  - `local_orientation` — quaternion `[qx, qy, qz, qw]`
-  - `global_position` — `[lat, lon, alt]` in degrees/meters (WGS84)
-  - `global_orientation` — `[roll, pitch, yaw]` in degrees, ZYX
-
-</details>
-
-
-### `omni.sim.position`
-
-<details>
-<summary><strong>Node: OgnSimUDPToGlobalPosition</strong></summary>
-
-- **Purpose**: Receives UDP packets and parses them into global position and orientation.
-- **Inputs**:
-  - `udp_port` — integer port number  
-- **Outputs**:
-  - `global_position` — `[lat, lon, alt]` in degrees/meters (WGS84) 
-  - `global_orientation` — `[roll, pitch, yaw]` in radians, ZYX
-
-</details>
-
-<details>
-<summary><strong>Node: OgnSimROS2ToGlobalPosition</strong></summary>
-
-- **Purpose**: Subscribes to a ROS2 topic and extracts global position and orientation.
-- **Inputs**:
-  - `LLA topic_name` — ROS2 topic string  
-  - `orientation topic_name` — ROS2 topic string  
-- **Outputs**:
-  - `global_position` — `[lat, lon, alt]` in degrees/meters (WGS84)
-  - `global_orientation` — `[roll, pitch, yaw]` in radians, ZYX
-
-</details>
-
-
-### `omni.sim.sensors`
-
-<details>
-<summary><strong>Node: OgnSimROS2GlobalPosePublisher</strong></summary>
-
-- **Purpose**: Publishes global position and orientation to a ROS2 topic using `GeoPoseStamped`.
-- **Inputs**:
-  - `global_position` — `[lat, lon, alt]` in degrees/meters (WGS84)
-  - `global_orientation` — `[roll, pitch, yaw]` in degrees, ZYX
-  - `hz` — publish frequency  
-  - `topic_name` — ROS2 topic string  
-- **Outputs**: None (publishes to ROS2)  
-
-</details>
-
-<details>
-<summary><strong>Node: OgnSimROS2RangePublisher</strong></summary>
-
-- **Purpose**: Publishes range sensor data to a ROS2 topic using `sensor_msgs/Range`.
-- **Inputs**:
-  - `max range` — float value in meters  
-  - `min range` — float value in meters  
-  - `publish Rate HZ` — publish frequency
-  - `topicName` — ROS2 topic string  
-- **Outputs**: None (publishes to ROS2)  
-
-</details>
-
-<details>
-<summary><strong>Node: OgnSimROS2ImagePublisher</strong></summary>
-
-- **Purpose**:  
-  Publishes RGB images from a render product to ROS2 topics.  
-  Subscribes to a raw RGB topic (`/isaac_core/raw_rgb`) and republishes the images at a configurable rate to `/isaac_core/image_rgb`.
-
-- **Inputs**:
-  - `enabled` — Enable or disable image publishing  
-  - `context` — Render context used to retrieve images  
-  - `frameId` — Frame ID used in the ROS2 message header  
-  - `nodeNamespace` — Optional ROS2 node namespace  
-  - `rawTopic` — Input topic for raw RGB images (`/isaac_core/raw_rgb`)  
-  - `repubTopic` — Output topic for republished images (`/isaac_core/image_rgb`)  
-  - `queueSize` — ROS2 publisher/subscriber queue size  
-  - `renderProductPath` — USD path to the render product (camera output)  
-  - `publishRateHZ` — Publish frequency in Hz  
-  - `execIn` — Execution trigger to initiate image publishing  
-
-- **Outputs**:  
-  None (publishes to ROS2)
-
-- **Behavior**:
-  - Initializes a Replicator ROS2 RGB writer and a republisher node on first run.  
-  - Periodically republishes incoming images with an incrementing `frame_id`.  
-  - Supports dynamic rate updates through `publishRateHZ`.  
-  - Automatically resets and releases all ROS2 resources when disabled.
-
-</details>
-
-<details>
-<summary><strong>Node: OgnSimROS2Gimbal</strong></summary>
-
-- **Purpose**: Read gimbal angels values from the topic `/isaac_core/gimbal`.
-- **Inputs**:
-  - `Gimbal Topic` — topic name to read gimbal values from
-- **Outputs**:
-  - `roll` - roll in degrees
-  - `pitch` - pitch in degrees
-  - `yaw` - yaw in degrees
-
-</details>
-
-
-### `omni.sim.template`
-
-<details>
-<summary><strong>Node: OgnSimTemplate</strong></summary>
-
-- **Purpose**: Starter template for new OmniGraph nodes.
-
-</details>
-
-</details>
-
-## Using Bbox 📦
-
-<details>
-
-<summary><strong>Using Bbox</strong></summary>
-
-You can enable the Bbox option with the `--bbox-publisher` flag.
-
-In order to add a new object to get its bbox data, you need to follow there steps:
-
-<details>
-<summary><strong>Adding your object under the `bboxes` Xfrom</strong></summary>
-
-- Open the .usda file you intend to open, for example `earth.usda`
-- Add your object to where ever you want it to be
-  * You can find free models to use at `Sketchfab.com`
-- In the stage tab, drag and drop your object prim into the /bboxes Xform
-  * Notice: that if your .usda doest have a /bboxes xform in its top hierarchy you will need to create one
-- Make sure your object looks like the cube in the image, placed in the world and its prim path is under /bboxes
-
-<img src="readme_images/bbox_xform.png" alt="object under bbox Xfrom for example" width="1500"/>
-</details>
-
-<details>
-<summary><strong>Adding `Global anchor` to your object</strong></summary>
-
-- Go to the `property` tab of the object and click `Add+`
-- Then you need to hover above `cesium` and a pop up window will appear
-- Then click the `Global anchor` option, and make sure when you scroll down you see it
-
-<img src="readme_images/bbox_global_anchor.png" alt="adding the global anchor to a object" width="500"/>
-</details>
-
-<details>
-<summary><strong>Adding the correct semantics to your object</strong></summary>
-
-- Go to the `Semantics Schema Editor` tab of the object, there you will see the same window as in the image
-  * Notice: Make sure all your fields look like in the image, the `apply to` needs to be on stage and not selected
-- Click `Add`
-
-<img src="readme_images/bbox_semantics.png" alt="adding the correct semantics to a object" width="1000"/>
-</details>
-
-#### Make sure to save the .usda file after adding your object and setting it
-
-</details>
-
-## Isaac Core Debugger 🐞
-
-<details>
-
-<summary><strong>Isaac Core Debugger</strong></summary>
-
-* Allows manually sending camera pose data to Isaac Sim with GUI:
-  * Latitude, Longitude, Altitude
-  * Roll, Pitch, Yaw
-  * Publish rate and optional offsets
-
-<img src="readme_images/debugger.png" alt="Logo" width="1000"/>
-
-## Python Requirements
-
-```bash
-python3 --version  # Verify Python version (should be 3.10)
-
-cd ./debugger
-python3 -m pip install .
-```
-
-## Adding Local Bin to PATH (Bash)
-
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-## Adding Local Bin to PATH (Zsh)
-
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-## Running the Debugger GUIs
-
-* Launch GUI for sending camera poses
-
-```bash
-ros-sender
-```
-or:
-```bash
-udp-sender
-```
-
-</details>
-
-## Deleting cesium cache
-
-<details>
-
-<summary><strong>Deleting cesium cache</strong></summary>
-
-* While running isaac sim overnight, some computers will have trouble opening it again after closing the overnight session.
-* That is because cesium has a cache file, that is flushed (deleted) after the isaac sim is shutdown, but for long session that file wont be deleted, and it might get so big (600-700GB), that the next time you try to open isaac sim it wont manage to open the file causing isaac sim to fail.
-* the cache file is located on .cache and can be deleted like this:
-```bash
-rm -rf ~/.cache/ov/cesium-request-cache.sqlite-wal
-```
-
-</details>
-
+### Handy configuration knobs
+
+| Setting | Where | Default |
+|---|---|---|
+| Camera resolution | `simulation/consts.py` → `RESOLUTION_WIDTH/HEIGHT` | 1920×1080 |
+| Camera FoV | `simulation/consts.py` → `CAMERA_FOV` | 78.1° |
+| RTSP port / paths | `simulation/consts.py` → `RTSP_PORT`, `RTSP_PATHS` | 8554, the two camera paths |
+| Pan / tilt speed | `ptz/ptz_sim.py` → `pan_vel`, `tilt_vel` | 60 °/s at full stick |
+| Zoom travel time | `ptz/ptz_sim.py` → `_zoom_loop` | 7 s end to end (matches the real lens) |
+| Scene start delay | env `PTZ_SCENE_DELAY_S` | 20 s after Isaac loads |
+| Explicit pose target | env `PTZ_JETSON_IP` | unset (reply-to-sender) |
+| RTSP diagnostics file | env `PTZ_RTSP_LOG` | `/tmp/ptz_sim_rtsp.log` |
+| Show Isaac Sim's logs | `ptz/ptz_sim.py` → `show_isaac_logs` | `False` |
+| Realism effects | `simulation/libraries/ros_image_to_rtp_lib.py` → `EFFECTS` | blur + flies + birds on |

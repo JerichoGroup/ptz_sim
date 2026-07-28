@@ -389,6 +389,47 @@ class FrameEffects:
             return raw
 
 
+# ==================== appsrc caps seed ====================
+# gst-rtsp-server builds the SDP for a DESCRIBE reply from pay0's caps, and those
+# caps only exist once the pipeline has negotiated — which cannot start until
+# appsrc has caps. Since appsrc is is-live=true, prepare returns NO_PREROLL
+# immediately instead of waiting for a buffer, so a client that connects before
+# the first frame is pushed gets "503 Service Unavailable" on DESCRIBE.
+# These defaults seed appsrc's caps so negotiation (and therefore the SDP) can
+# complete on a cold start. Kept in sync with consts.py; send_image() replaces
+# them the moment a real frame reports a different format.
+try:
+    import consts as _sim_consts
+    _DEF_W = int(_sim_consts.RESOLUTION_WIDTH)
+    _DEF_H = int(_sim_consts.RESOLUTION_HEIGHT)
+except Exception:                                         # pragma: no cover
+    _DEF_W, _DEF_H = 1920, 1080
+
+_DEFAULT_CAPS_STR = (
+    f"video/x-raw,format=RGB,width={_DEF_W},height={_DEF_H},framerate=30/1"
+)
+
+# ==================== diagnostics sink ====================
+# This module runs inside the lib_manager SUBPROCESS (see main_sim.py), whose
+# stdout is the pipe HostIsaacManager owns — so these lines are only visible on
+# the console when show_isaac_logs=True, buried in the Isaac firehose. Mirror
+# them to a plain file so frame-flow can be watched with a simple
+#   tail -f /tmp/ptz_sim_rtsp.log
+# without turning on Isaac's logs. Override the path with PTZ_RTSP_LOG.
+_DIAG_PATH = os.environ.get("PTZ_RTSP_LOG", "/tmp/ptz_sim_rtsp.log")
+
+
+def _diag(msg: str) -> None:
+    """Print (flushed) and append to the diagnostics log; never raises."""
+    line = f"[RTSP] {msg}"
+    print(line, flush=True)
+    try:
+        with open(_DIAG_PATH, "a") as fh:
+            fh.write(f"{time.strftime('%H:%M:%S')} {line}\n")
+    except Exception:
+        pass
+
+
 # ==================== GstRTSPBridge ====================
 
 class GstRTSPBridge:
@@ -441,6 +482,10 @@ class GstRTSPBridge:
         self._appsrc = None
         self._appsrc_lock = threading.Lock()
         self._last_caps_str = None
+        # Newest processed frame, kept so a fresh media-configure can prime the
+        # encoder immediately instead of idling until the next ROS callback.
+        self._last_frame_raw = None
+        self._last_frame_caps_str = None
 
         Gst.init(None)
         self._create_rtsp_server()
@@ -450,8 +495,38 @@ class GstRTSPBridge:
         self._gst_thread = threading.Thread(target=self._main_loop.run, daemon=True)
         self._gst_thread.start()
 
-        print(f"[RTSP] Server listening on :{rtsp_port}  paths: {rtsp_paths}")
-        print(f"[RTSP] Connect Jetson with camera.ip = <host-ip> in config.yaml")
+        # flush=True: stdout is a pipe when Isaac Sim runs under HostIsaacManager,
+        # so unflushed prints sit in the buffer and never reach the operator.
+        _diag(f"Server listening on :{rtsp_port}  paths: {rtsp_paths}")
+        _diag(f"diagnostics also being written to {_DIAG_PATH}")
+
+        # Frame accounting — makes "is the image topic actually reaching us?"
+        # answerable from the sim host's stdout instead of guesswork. A DESCRIBE
+        # cannot be answered without data flowing, so a silent subscription looks
+        # to the client like a hang and then a 503.
+        self._n_recv = 0
+        self._n_pushed = 0
+        threading.Thread(target=self._stats_loop, daemon=True).start()
+
+    def _stats_loop(self, period: float = 5.0) -> None:
+        """Periodically report frame flow so a silent subscription is obvious."""
+        last_recv = last_pushed = 0
+        while True:
+            time.sleep(period)
+            with self._appsrc_lock:
+                recv, pushed = self._n_recv, self._n_pushed
+                attached = self._appsrc is not None
+            d_recv, d_pushed = recv - last_recv, pushed - last_pushed
+            last_recv, last_pushed = recv, pushed
+            where = "client attached" if attached else "no client"
+            _diag(f"{where}: image_topic={d_recv / period:.1f} fps  "
+                  f"pushed={d_pushed / period:.1f} fps  "
+                  f"(totals recv={recv} pushed={pushed})")
+            if d_recv == 0:
+                _diag(f"WARNING: no frames from the image topic in the last "
+                      f"{period:.0f}s. Without data the pipeline cannot negotiate, so "
+                      f"DESCRIBE cannot be answered and clients fail (503 / timeout). "
+                      f"Check the publisher and that this process can see the topic.")
 
     def _create_rtsp_server(self) -> None:
         server = GstRtspServer.RTSPServer.new()
@@ -466,9 +541,25 @@ class GstRTSPBridge:
         mounts = server.get_mount_points()
         for path in self._rtsp_paths:
             mounts.add_factory(path, factory)
-            print(f"[RTSP] Mounted at {path}")
+            _diag(f"Mounted at {path}")
 
-        server.attach(None)  # attaches to default GLib main context
+        # attach() returns 0 on failure — most commonly EADDRINUSE because a
+        # STALE lib_manager from an earlier run is still holding the port (it is
+        # spawned by main_sim.py and survives if Isaac Sim is killed rather than
+        # exiting cleanly). Silence here is dangerous: this server ends up serving
+        # nobody while the old orphan answers clients from a dead Isaac, so the
+        # Jetson sees 503 forever and the logs look healthy. Fail loudly instead.
+        source_id = server.attach(None)  # attaches to default GLib main context
+        if not source_id:
+            _diag(f"FATAL: could not bind RTSP port {self._rtsp_port} — it is "
+                  f"already in use. A stale lib_manager from a previous run is "
+                  f"almost certainly still holding it; clients would be served by "
+                  f"that dead instance (503, no video). Find and kill it with:")
+            _diag(f"    ss -ltnp | grep {self._rtsp_port}")
+            _diag(f"    pkill -9 -f 'ptz_sim/simulation/lib_manager'")
+            raise RuntimeError(
+                f"RTSP port {self._rtsp_port} already in use — stale lib_manager?"
+            )
         self._rtsp_server = server
 
     def _on_media_configure(self, factory, media) -> None:
@@ -477,26 +568,51 @@ class GstRTSPBridge:
         pipeline = media.get_element()
         appsrc = pipeline.get_by_name("src")
         if appsrc is None:
-            print("[RTSP] WARNING: appsrc 'src' not found in factory pipeline")
+            _diag("WARNING: appsrc 'src' not found in factory pipeline")
             return
 
-        # Restore caps if we already know the frame format from a previous session.
-        if self._last_caps_str:
-            appsrc.set_property("caps", Gst.Caps.from_string(self._last_caps_str))
+        # Seed appsrc caps BEFORE the SDP is generated, always — not just when a
+        # previous session left a cached format behind. Without caps here the
+        # pipeline cannot negotiate, pay0 has no caps, the SDP cannot be built and
+        # the client is answered with "503 Service Unavailable" on DESCRIBE.
+        # The first real frame is ~33 ms away (30 Hz ROS callback), which is far
+        # too late: this DESCRIBE is answered within the same prepare cycle.
+        # Prefer the last format we actually saw; fall back to the expected Isaac
+        # output. send_image() re-sets caps if the real frame differs.
+        with self._appsrc_lock:
+            caps_str  = (self._last_frame_caps_str
+                         or self._last_caps_str
+                         or _DEFAULT_CAPS_STR)
+            prime_raw = self._last_frame_raw
+        appsrc.set_property("caps", Gst.Caps.from_string(caps_str))
 
         with self._appsrc_lock:
-            self._appsrc = appsrc
+            self._appsrc        = appsrc
+            self._last_caps_str = caps_str
+
+        # Prime the encoder with the newest frame we have (only present if a real
+        # frame has already been seen, so it matches caps_str) so x264enc has data
+        # in flight right away rather than waiting on the next ROS callback.
+        if prime_raw is not None:
+            try:
+                buf = Gst.Buffer.new_allocate(None, len(prime_raw), None)
+                buf.fill(0, prime_raw)
+                appsrc.emit("push-buffer", buf)
+            except Exception as e:
+                _diag(f"priming push-buffer failed: {e}")
 
         media.connect("unprepared", self._on_media_unprepared)
-        print("[RTSP] Client connected — pipeline started")
+        _diag(f"Client connected — pipeline started (caps: {caps_str})")
 
     def _on_media_unprepared(self, media) -> None:
         """Fired in GLib thread when the last RTSP client disconnects."""
         with self._appsrc_lock:
             self._appsrc = None
-        # Reset caps so they are re-applied cleanly on the next connection.
-        self._last_caps_str = None
-        print("[RTSP] All clients disconnected — pipeline stopped")
+        # Deliberately KEEP _last_caps_str (and the cached frame): they are what
+        # let the next DESCRIBE negotiate and produce an SDP before any frame has
+        # been pushed into the new pipeline. Clearing them made every reconnect a
+        # cold start, which fails with 503 — see _on_media_configure.
+        _diag("All clients disconnected — pipeline stopped")
 
     @staticmethod
     def _caps_for(encoding: str, width: int, height: int):
@@ -516,35 +632,50 @@ class GstRTSPBridge:
 
     def send_image(self, msg: Image) -> None:
         """Push one ROS Image frame into the RTSP pipeline."""
-        with self._appsrc_lock:
-            appsrc = self._appsrc
-        if appsrc is None:
-            return  # no client connected — drop frame silently
+        caps = self._caps_for(msg.encoding, msg.width, msg.height)
+        if caps is None:
+            print(f"[RTSP Bridge] Unsupported encoding: {msg.encoding}", flush=True)
+            return
+        caps_str = caps.to_string()
 
         try:
             raw = bytes(msg.data)
         except Exception as e:
-            print("[RTSP Bridge] Failed to copy image data:", e)
+            print("[RTSP Bridge] Failed to copy image data:", e, flush=True)
             return
 
-        caps = self._caps_for(msg.encoding, msg.width, msg.height)
-        if caps is None:
-            print(f"[RTSP Bridge] Unsupported encoding: {msg.encoding}")
-            return
+        # Remember the newest frame and its exact format even when NO client is
+        # connected. This is what lets the next DESCRIBE succeed: media-configure
+        # seeds these caps and primes the encoder with this frame, so the pipeline
+        # negotiates and gst-rtsp-server can build the SDP. Previously this method
+        # returned before caching whenever no client was attached, so the very
+        # first client always met a pipeline with no caps and no data -> 503.
+        with self._appsrc_lock:
+            appsrc = self._appsrc
+            self._last_frame_raw      = raw
+            self._last_frame_caps_str = caps_str
+            self._n_recv += 1
+
+        if appsrc is None:
+            return  # no client connected — nothing to push
 
         # Apply blur/noise realism before encoding (no-op when nothing is active).
         channels = self._CHANNELS.get(msg.encoding)
         if channels is not None:
             raw = self.effects.process(raw, msg.width, msg.height, channels, msg.encoding)
 
-        caps_str = caps.to_string()
-        if caps_str != self._last_caps_str:
+        with self._appsrc_lock:
+            caps_changed = (caps_str != self._last_caps_str)
+            if caps_changed:
+                self._last_caps_str = caps_str
+        if caps_changed:
             appsrc.set_property("caps", caps)
-            self._last_caps_str = caps_str
 
         buf = Gst.Buffer.new_allocate(None, len(raw), None)
         buf.fill(0, raw)
         appsrc.emit("push-buffer", buf)
+        with self._appsrc_lock:
+            self._n_pushed += 1
 
     def close(self) -> None:
         with self._appsrc_lock:
