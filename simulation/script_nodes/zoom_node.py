@@ -1,37 +1,86 @@
 """Script node: subscribes to /isaac_core/zoom (Float32, normalised 0-1) and
 updates the camera focal length so Isaac Sim renders the correct FOV.
 
-Camera: UNV IPC6852ER-X45-VF (45x optical zoom)
-  Wide-end: FL = 5.7 mm,   HFoV = 59.5°
-  Tele-end: FL = 256.5 mm, HFoV ~= 1.45°  (datasheet says 2.2° — small
-            discrepancy due to lens distortion/rounding in the spec sheet)
+Camera: Netz-250 (20x optical, Sony IMX415 1/2.8" sensor)
+  sensor: 5.57 x 3.13 mm
 
-Sensor horizontal aperture is fixed at 6.504 mm, derived from the wide-end
-numbers: 2 × 5.7 × tan(59.5°/2).  Focal length is linearly interpolated
-from 5.7 to 256.5 mm as zoom goes 0 → 1.
+The focal length is NOT a linear interpolation between datasheet wide/tele
+values, and it is NOT derived from the camera's on-screen magnification readout.
+Both overstate the real magnification. Instead the field of view comes from the
+pan-shift curve DroneTracker measured on the actual camera
+(scripts/calib_zoom_via_pan.py):
+
+    HFoV(Z) = (pan_range_deg / 2) / shift_per_pan(Z)
+
+Because the tracking algorithm centres targets with dx = ex / shift_per_pan(Z),
+deriving the rendered FOV from that same curve guarantees a commanded pan delta
+moves the image by exactly the fraction the algorithm expects — at every zoom.
+
+KEEP IN SYNC with ptz/netz250.py (this file is loaded standalone by Isaac Sim as
+an OmniGraph script node, so it cannot import from the repo).
 """
 
 import math
 import threading
 import omni.usd
 import rclpy
+import numpy as np
 from std_msgs.msg import Float32
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from pxr import UsdGeom
 
 
-# ── Camera constants (IPC6852ER-X45-VF) ──────────────────────────────────────
+# ── Camera constants (Netz-250) — keep in sync with ptz/netz250.py ───────────
 
 ZOOM_TOPIC        = "/isaac_core/zoom"
 CAMERA_PRIM_PATH  = "/Environment/udp_camera/Xform/main_camera_01"
 
-FOCAL_LENGTH_WIDE = 5.7      # mm
-FOCAL_LENGTH_TELE = 256.5    # mm
+SENSOR_WIDTH_MM  = 5.57      # IMX415 1/2.8"
+SENSOR_HEIGHT_MM = 3.13
 
-# Sensor size derived from wide-end: 2 × FL_wide × tan(HFoV_wide / 2)
-HORIZONTAL_APERTURE = 2 * FOCAL_LENGTH_WIDE * math.tan(math.radians(59.5 / 2))  # ≈ 6.504 mm
-VERTICAL_APERTURE   = HORIZONTAL_APERTURE * 9 / 16                               # 16:9 sensor
+PAN_RANGE_DEG = 360.0
+PAN_DEG_PER_UNIT = PAN_RANGE_DEG / 2.0
+
+# Measured fraction-of-frame shift per ONVIF pan unit, vs normalised zoom.
+PAN_SHIFT_CURVE = [
+    (0.0, 2.77), (0.1, 3.24), (0.2, 3.92), (0.3, 4.50), (0.4, 6.38), (0.5, 8.31),
+]
+# On-screen (overstated) magnification — used ONLY to extrapolate the trend
+# above the measured range.
+OVERLAY_MAG_CURVE = [
+    (0.0, 1.0), (0.1, 2.0), (0.2, 4.0), (0.3, 6.0), (0.4, 8.0), (0.5, 10.0),
+    (0.6, 12.0), (0.7, 14.0), (0.8, 18.0), (0.9, 23.0), (1.0, 30.0),
+]
+MEASURED_ZOOM_MAX = 0.5
+
+HORIZONTAL_APERTURE = SENSOR_WIDTH_MM
+VERTICAL_APERTURE   = SENSOR_HEIGHT_MM
+
+
+def _interp(curve, z):
+    return float(np.interp(z, [p[0] for p in curve], [p[1] for p in curve]))
+
+
+def _true_magnification(z):
+    z = max(0.0, min(1.0, float(z)))
+    base = _interp(PAN_SHIFT_CURVE, 0.0)
+    if z <= MEASURED_ZOOM_MAX:
+        return _interp(PAN_SHIFT_CURVE, z) / base
+    mag_edge = _interp(PAN_SHIFT_CURVE, MEASURED_ZOOM_MAX) / base
+    ovl_edge = _interp(OVERLAY_MAG_CURVE, MEASURED_ZOOM_MAX)
+    return mag_edge * (_interp(OVERLAY_MAG_CURVE, z) / max(ovl_edge, 1e-6))
+
+
+def _hfov_deg(z):
+    return (PAN_DEG_PER_UNIT / _interp(PAN_SHIFT_CURVE, 0.0)) / _true_magnification(z)
+
+
+def _focal_length_mm(z):
+    return SENSOR_WIDTH_MM / (2.0 * math.tan(math.radians(_hfov_deg(z)) / 2.0))
+
+
+FOCAL_LENGTH_WIDE = _focal_length_mm(0.0)
 
 
 # ── ROS2 subscriber ───────────────────────────────────────────────────────────
@@ -95,8 +144,10 @@ def setup(db):
         cam.GetFocalLengthAttr().Set(float(FOCAL_LENGTH_WIDE))   # start at wide
 
         db.internal_state.focal_attr = cam.GetFocalLengthAttr()
-        print(f"[zoom_node] camera ready — HA={HORIZONTAL_APERTURE:.3f} mm  "
-              f"FL={FOCAL_LENGTH_WIDE} → {FOCAL_LENGTH_TELE} mm")
+        print(f"[zoom_node] camera ready (Netz-250) — HA={HORIZONTAL_APERTURE:.3f} mm  "
+              f"VA={VERTICAL_APERTURE:.3f} mm  FL={FOCAL_LENGTH_WIDE:.2f} mm "
+              f"(HFoV {_hfov_deg(0.0):.1f}°) → {_focal_length_mm(1.0):.2f} mm "
+              f"(HFoV {_hfov_deg(1.0):.1f}°)")
 
     sub = ZoomSubscriber()
     sub.subscribe()
@@ -114,12 +165,13 @@ def compute(db):
         return True
 
     zoom = max(0.0, min(1.0, zoom))
-    focal_length = FOCAL_LENGTH_WIDE + zoom * (FOCAL_LENGTH_TELE - FOCAL_LENGTH_WIDE)
+    focal_length = _focal_length_mm(zoom)
     db.internal_state.focal_attr.Set(float(focal_length))
     db.internal_state.last_zoom = zoom
 
-    hfov = 2 * math.degrees(math.atan(HORIZONTAL_APERTURE / (2 * focal_length)))
-    print(f"[zoom_node] zoom={zoom:.3f}  FL={focal_length:.1f} mm  HFoV={hfov:.1f}°")
+    hfov = _hfov_deg(zoom)
+    print(f"[zoom_node] zoom={zoom:.3f}  mag={_true_magnification(zoom):.2f}x  "
+          f"FL={focal_length:.2f} mm  HFoV={hfov:.2f}°")
 
     return True
 

@@ -402,11 +402,14 @@ try:
     import consts as _sim_consts
     _DEF_W = int(_sim_consts.RESOLUTION_WIDTH)
     _DEF_H = int(_sim_consts.RESOLUTION_HEIGHT)
+    # Netz-250 streams at 20 fps; advertising the true rate keeps the client's
+    # timestamps and the encoder's rate control honest.
+    _DEF_FPS = int(round(float(_sim_consts.CAMERA_FPS)))
 except Exception:                                         # pragma: no cover
-    _DEF_W, _DEF_H = 1920, 1080
+    _DEF_W, _DEF_H, _DEF_FPS = 1920, 1080, 20
 
 _DEFAULT_CAPS_STR = (
-    f"video/x-raw,format=RGB,width={_DEF_W},height={_DEF_H},framerate=30/1"
+    f"video/x-raw,format=RGB,width={_DEF_W},height={_DEF_H},framerate={_DEF_FPS}/1"
 )
 
 # ==================== diagnostics sink ====================
@@ -627,7 +630,7 @@ class GstRTSPBridge:
         if fmt is None:
             return None
         return Gst.Caps.from_string(
-            f"video/x-raw,format={fmt},width={width},height={height},framerate=30/1"
+            f"video/x-raw,format={fmt},width={width},height={height},framerate={_DEF_FPS}/1"
         )
 
     def send_image(self, msg: Image) -> None:

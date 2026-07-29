@@ -32,6 +32,11 @@ import socket
 import threading
 import time
 
+try:
+    import netz250
+except ImportError:
+    from ptz import netz250
+
 
 class PTZSimController:
     """Jetson-side PTZ simulation controller.
@@ -113,7 +118,9 @@ class PTZSimController:
                     # Sync zoom_pos to simulator truth, mirroring the real
                     # controller's _poll_pose (otherwise zoom_pos goes stale
                     # after center_and_zoom, which never updates it locally).
-                    self.zoom_pos = msg["zoom"]
+                    # Pose carries RAW ONVIF zoom (Netz-250: -1..+1); normalise
+                    # to [0,1] like the real controller does.
+                    self.zoom_pos = netz250.normalize_zoom(msg["zoom"])
             except Exception:
                 pass
 
@@ -139,7 +146,9 @@ class PTZSimController:
     def zoom_to(self, t):
         t = float(max(0.0, min(1.0, t)))
         self.zoom_pos = t
-        self._send("zoom_to", target=t)
+        # The host is a Netz-250 emulator: it expects the RAW ONVIF zoom value,
+        # which is what the camera's ONVIF interface would receive.
+        self._send("zoom_to", raw=netz250.denormalize_zoom(t))
 
     def zoom_in(self):
         self.zoom_to(min(self.zoom_max, self.zoom_pos + self.zoom_step))

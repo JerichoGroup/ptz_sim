@@ -1,12 +1,17 @@
 # PTZ Camera Simulation — Isaac Sim ↔ Jetson
 
-This repo simulates a **real PTZ security camera** so the drone-tracking algorithm can be
-developed and tested without the physical camera.
+This repo simulates the **Netz-250 PTZ security camera** so the drone-tracking algorithm can
+be developed and tested without the physical camera.
 
 From the algorithm's point of view nothing changes: it still receives an **RTSP H.264 video
 stream** and still sends the **same pan / tilt / zoom commands** it would send to the real
 camera. The difference is that behind the scenes those commands move a virtual camera inside
 an **NVIDIA Isaac Sim** world, and the video is rendered rather than captured.
+
+> **Which camera?** The Netz-250 (Sony IMX415 1/2.8" sensor, 20× optical). Everything the
+> simulator needs to know about it lives in one file — [`ptz/netz250.py`](ptz/netz250.py) —
+> mirroring the `Netz-250` entry in DroneTracker's `CAMERA_PRESETS`. The older UNV IPC6852
+> is deprecated and is **not** emulated.
 
 Two machines are involved:
 
@@ -49,27 +54,34 @@ internal to the sim stand.
 ### ① Commands — Jetson → sim stand (UDP, JSON)
 
 The Jetson sends one small JSON packet per command to **`sim.host_ip:5005`**. Every packet
-looks like `{"type": "<name>", "time": <unix-seconds>, ...}`:
+looks like `{"type": "<name>", "time": <unix-seconds>, ...}`.
+
+These mirror the ONVIF operations the real camera receives, in the camera's own units:
+**pan/tilt in ONVIF normalised `[-1,+1]`** and **zoom as the RAW ONVIF value** (`-1` = wide,
+`+1` = tele on this camera).
 
 | Command | Payload | Meaning |
 |---|---|---|
-| `move` | `vx`, `vy` | Continuous pan/tilt velocity (like ONVIF *ContinuousMove*). Re-sent while a key is held; expires after `cmd_ttl` (0.15 s) so the camera stops if packets stop. |
-| `relative_move` | `dp`, `dt`, `space` | One-shot nudge, in **fractions of the current field of view** (±1.0 = half the current HFoV). |
-| `center_and_zoom` | `dp`, `dt`, `zoom_target`, `space`, `parallel` | The lock-on move: centre the target **and** zoom in, together. This is the one the tracker actually uses. |
-| `zoom_to` | `target` | Absolute zoom, `0.0` = widest … `1.0` = full tele. |
-| `save_home` | – | Remember the current pose as "home". |
-| `go_home` | – | Slew back to the saved home pose and zoom. |
+| `move` | `vx`, `vy` | ONVIF *ContinuousMove*. Normalised velocity; the host slews at the datasheet rate (24.5 °/s pan, 15 °/s tilt at full stick). Expires after `cmd_ttl` (0.15 s) so the camera stops if packets stop. |
+| `center_and_zoom` | `dp`, `dt`, `pan`, `tilt`, `zoom_raw`, `use_absolute` | The lock-on move. With `use_absolute` (the Netz-250 path) the Jetson has already resolved `pan = pan_now + dp`, so the host performs **one AbsoluteMove** — pan, tilt and zoom together, exactly like the camera. |
+| `center_fine` | `dp`, `dt` | Fine centering via *RelativeMove*, **no zoom change**. Executed near-exactly (not snapped to the coarse grid) — this is why it exists. |
+| `relative_move` | `dp`, `dt` | Plain *RelativeMove*. Used by the debug tools in `ptz/`; the production controller uses `center_fine`. |
+| `absolute_move` | `pan`, `tilt`, `zoom` | *AbsoluteMove*. Any axis may be omitted to leave it untouched. Pan/tilt snap to the grid. |
+| `zoom_to` | `raw` | Absolute zoom to a RAW ONVIF value. The host slews over ~4 s end-to-end. |
+| `save_home` / `go_home` | – (`go_home` may carry `zoom_raw`) | Capture / return to the home pose. `go_home` carries the zoom to restore, matching the real controller's precedence (home zoom → pre-lock zoom → search position). |
 | `stop_all` | – | Stop all motion. **Does not shut the simulator down** — the Jetson sends this on every quit, and Isaac Sim takes too long to start to throw it away. |
 | `ping` | `scene`, `session` | Heartbeat, every 1.5 s. See below. |
-
-Because `dp`/`dt` are FoV fractions rather than fixed angles, a nudge automatically becomes
-finer as you zoom in — exactly how the real camera's `TranslationSpaceFov` behaves.
 
 ### ② Pose — sim stand → Jetson (UDP, JSON, 20 Hz)
 
 The sim replies `{"type":"pose","pan":…,"tilt":…,"zoom":…,"timestamp":…}` twenty times a
 second, so the Jetson always knows where the camera actually is (it drives the HUD and keeps
 the zoom value honest).
+
+`pan`/`tilt` are ONVIF units and `zoom` is the **RAW** ONVIF value — precisely what
+`GetStatus` returns on the real camera, so `PTZController.get_pose()` and
+`PTZSimController.get_pose()` are interchangeable. The Jetson normalises the raw zoom to
+`[0,1]` itself.
 
 The important design point: **the sim never initiates traffic to the Jetson.** It replies to
 the *source address of whatever packet it last received* ("reply-to-sender"), sent from the
@@ -195,6 +207,7 @@ Then check `config.yaml` on the Jetson:
 
 ```yaml
 camera:
+  model: "Netz-250"            # must match what the simulator emulates
   ip: "<SIM_STAND_IP>"         # the sim stand — this is the only sim/real difference
 sim:
   host_ip: "<SIM_STAND_IP>"
@@ -325,8 +338,9 @@ The RTSP server is reachable but cannot serve video. Check `/tmp/ptz_sim_rtsp.lo
 
 ### The Jetson prints `404 Not Found`
 
-The path is wrong. Only `/unicast/c1/s0/live` and `/cam/realmonitor` are mounted. Clear any
-`rtsp_main_override` / `rtsp_alt_override` in the Jetson's `config.yaml`.
+The path is wrong. The simulator mounts `/Streaming/channel/1` (the Netz-250's main path),
+`/cam/realmonitor` and the legacy `/unicast/c1/s0/live`. Clear any `rtsp_main_override` /
+`rtsp_alt_override` in the Jetson's `config.yaml` so the URL is built from `camera.model`.
 
 ### The Jetson prints `Connection refused` on port 554
 
@@ -380,15 +394,17 @@ LivePtzPipeline(cfg, ptz=None)   # ptz=None  -> builds the real PTZController
 `PTZSimController`. That single optional argument is the *only* simulator-related change to
 the shared pipeline code.
 
-### Verified state (2026-07-29)
+### Verified state (2026-07-29, Netz-250)
 
 The two public surfaces are **identical** — same method names, same signatures, nothing on
 one that is missing from the other:
 
 ```
 autofocus_once()
-center_and_zoom(delta_pan, delta_tilt, zoom_target, space=None, parallel=True) -> bool
-get_pose()                      -> (pan, tilt, zoom, timestamp)
+center_and_zoom(delta_pan, delta_tilt, zoom_target,
+                space=None, parallel=True, use_absolute=False) -> bool
+center_fine(delta_pan, delta_tilt)                             -> bool
+get_pose()                      -> (pan, tilt, RAW zoom, timestamp)
 go_home()
 move(vx, vy)
 save_home()
@@ -413,24 +429,33 @@ cd ~/clones/DroneTracker && python3 -m pytest tests/test_sim_controller.py -v
 > simulation and then break on the real camera, which is the exact bug class this simulator
 > is supposed to prevent.
 
+### Camera swap history
+
+The project originally emulated the **UNV IPC6852** (45x, `TranslationSpaceFov` centering).
+When DroneTracker moved to the **Netz-250**, the *interface* barely changed — they had
+refactored camera differences into `CAMERA_PRESETS` data — but the *behaviour* changed a lot:
+FoV-fraction centering became ONVIF-unit centering via measured curves, RelativeMove lock-on
+became a single AbsoluteMove, zoom raw range flipped from `0..1` to `-1..+1`, ContinuousMove
+signs reversed, and `center_fine()` appeared. Section 7 covers what the simulator now
+reproduces. The IPC6852 is deprecated and no longer emulated.
+
 ### What was reconciled to get there
 
 Four discrepancies were found and fixed on the `DroneTracker` side:
 
 | Issue | Why it mattered |
 |---|---|
-| `zoom_to()` had no busy-gate on the sim | The real `zoom_to()` only acts when neither `_zooming` nor `_rel_moving` is set, so the camera **silently ignores** a zoom requested mid-motion. The sim applied every one — so rapid `Z`/`X` presses, and zooms during a lock-on, behaved differently from the real thing. |
+| `zoom_to()` gating (revisited for the Netz-250) | The IPC6852 dropped a zoom requested mid-motion; the Netz-250 instead **coalesces** to the latest target, because only AbsoluteMove moves its zoom and each takes ~2 s. The sim now accumulates too, so rapid `Z`/`X` presses behave identically. |
 | `center_and_zoom(dp, dt, …)` vs `(delta_pan, delta_tilt, …)` | Worked only because the caller passes those three positionally. Any keyword call would have raised on one class and not the other. |
 | Sim had `relative_move()`, `zoom_search()`, `zoom_track()`, `pid_move` | All four had been **deleted from the real controller**; none are called by the pipeline. Leaving them invited code that runs in simulation and fails on hardware. |
 | Sim had `trigger_autofocus()`, real has `autofocus_once()` | Same concept under two names. Renamed to the real one (still a no-op — there is no lens to focus). |
 
 ### Behaviours that match by construction
 
-* **Lock-on geometry.** `center_and_zoom`'s `delta_pan`/`delta_tilt` are ONVIF
-  `TranslationSpaceFov` fractions — ±1.0 means half the *current* HFoV — so a nudge scales
-  with zoom. `ptz/ptz_sim.py`'s `_apply_relative()` derives `half_hfov` from the same lens
-  constants (`FOCAL_LENGTH_WIDE/TELE`) that `dronetracker/ptz/transform.py` uses, so the
-  same command produces the same angle at every zoom level.
+* **Lock-on geometry.** `center_and_zoom`'s `delta_pan`/`delta_tilt` are ONVIF pan/tilt
+  units. The simulator's field of view is derived from the same measured `pan_shift_curve`
+  the algorithm centres with, so a commanded delta shifts the image by exactly the fraction
+  the algorithm assumes — at every zoom level (see section 7).
 * **Velocity scaling.** `vel_scale()` uses the identical formula on both sides
   (`max(min_vel_scale, 1 - zoom_pos·(1 - min_vel_scale))`), so arrow-key panning slows down
   with zoom the same way. *(This was a real bug: the sim used an older FoV-ratio formula
@@ -438,8 +463,13 @@ Four discrepancies were found and fixed on the `DroneTracker` side:
 * **Command coalescing.** `move()` is latest-intent on both sides and expires after
   `cmd_ttl` (0.15 s), and both refuse to issue a `move` while a relative move is in flight
   (a ContinuousMove would cancel it).
-* **Zoom travel time.** The simulator slews zoom over 7 s end-to-end, matching the real
-  lens's `zoom_full_s = 7.0`.
+* **Zoom travel time.** The simulator slews zoom over 4 s end-to-end, matching the
+  Netz-250's `zoom.full_travel_s = 4.0`, and the Jetson passes that value through so the two
+  cannot drift apart.
+* **Zoom coalescing.** Rapid zoom presses accumulate into one final move on both sides — the
+  camera only honours AbsoluteMove for zoom, so dropping requests would feel different.
+* **Raw zoom range.** Pose carries the RAW ONVIF zoom (`-1 … +1`); both sides normalise it to
+  `[0,1]` with identical formulas.
 * **Home.** The sim auto-saves home at the startup pose, mirroring the real controller's
   connect-time home capture, so `go_home` works from the first frame.
 
@@ -463,20 +493,90 @@ Constructor arguments differ too, by necessity — the real one takes `ip/port/u
 the sim takes `host_ip/host_port/listen_port` plus `scene`. Nothing constructs these
 directly except `run_live_ptz.py` and `apps/sim_live_ptz.py`.
 
-> ⚠️ **One fidelity gap to be aware of:** `zoom.full_travel_s` in the Jetson's `config.yaml`
-> is passed to the real controller, and the Jetson's lock-on settle maths uses it — but it is
-> **not** sent to the simulator, which hardcodes 7 s in `_zoom_loop`. They agree at the
-> default of 7.0. If you ever change that config value, the simulator will not follow and
-> zoom timing will diverge. Worth wiring through the protocol if it becomes a real knob.
+> ✅ `zoom.full_travel_s` is now passed to `PTZSimController` and used for its settle maths,
+> and the host's slew rate comes from `netz250.ZOOM_FULL_TRAVEL_S`. Keep those two in step if
+> you ever change the camera's zoom speed.
 
 ---
 
-## 7. Where things live
+## 7. What makes this a *Netz-250* and not just "a camera"
+
+Everything below lives in [`ptz/netz250.py`](ptz/netz250.py). The point of reproducing these
+details — including the awkward ones — is that the algorithm was calibrated against the real
+hardware. A simulator that behaved *better* than the camera would hide real bugs.
+
+### Field of view comes from a measured curve, not the datasheet
+
+The camera's on-screen display claims up to 30× magnification. That number is wrong — it
+includes digital zoom and simply overstates the optics. DroneTracker measured the truth by
+panning a known ONVIF delta and watching how far the scene actually moved
+(`scripts/calib_zoom_via_pan.py`), giving `pan_shift_curve`: the fraction of the frame the
+scene shifts per ONVIF unit, at each zoom level.
+
+| zoom | true optical mag | on-screen claim | HFoV |
+|---|---|---|---|
+| 0.0 | 1.0× | 1× | 65.0° |
+| 0.2 | 1.4× | 4× | 45.9° |
+| 0.5 | 3.0× | 10× | 21.7° |
+
+So the simulator derives its field of view from that same curve:
+
+```
+HFoV(Z) = (pan_range_deg / 2) / shift_per_pan(Z)
+```
+
+Pan/tilt then stay **linear** in ONVIF units (180°/unit pan, 45°/unit tilt). This is not a
+coincidence — it makes the geometry cancel exactly. The algorithm centres a target with
+`dx = fov_gain · ex / shift_per_pan(Z)`; the resulting image shift in the simulator is
+
+```
+dx · 180 / HFoV(Z)  =  (fov_gain · ex / spp(Z)) · spp(Z)  =  fov_gain · ex
+```
+
+— independent of zoom. Verified: a target 25 % off-centre produces a 0.205 frame shift at
+every zoom level, which is exactly `fov_gain (0.82) × 0.25`. Had we rendered the on-screen
+magnification instead, lock-on would overshoot by 3–5× at zoom.
+
+> **Known gap:** the measured curves stop at zoom **0.5**. Above that the simulator continues
+> the trend using the *shape* of the on-screen curve, anchored to the last real measurement.
+> Extend `PAN_SHIFT_CURVE` / `TILT_SHIFT_CURVE` with measurements above 0.5 to remove the
+> guesswork. The algorithm has the same gap (its own curve lookup clamps at 0.5).
+
+### The AbsoluteMove grid quirk — reproduced on purpose
+
+On the real camera, **AbsoluteMove snaps pan/tilt onto a ~0.02 ONVIF grid** (~3.6° of pan).
+Small deltas — exactly the ones needed to centre at high zoom — either round away to nothing
+or overshoot. That single quirk is the reason `PTZController.center_fine()` exists, and it is
+faithfully reproduced:
+
+```
+AbsoluteMove(0.005) -> quantised to 0.0000   (the move is lost)
+center_fine(0.005)  -> lands at    0.0050   (RelativeMove is exact)
+```
+
+### Other behaviours that are deliberately camera-accurate
+
+| Behaviour | Value | Why it matters |
+|---|---|---|
+| Zoom RAW range | `-1 … +1` | Raw `0.0` is **mid**-zoom, not wide. Treating it as `[0,1]` would silently halve every magnification. |
+| Zoom travel | ~4 s end-to-end | Lock-on settle timing depends on it. |
+| Zoom commands | latest-target *chase* | The camera only honours AbsoluteMove for zoom (~2 s each), so rapid Z/X presses **accumulate** into one final move rather than being dropped. |
+| ContinuousMove signs | pan −1, tilt −1 | A positive `vx` makes the reported pan **decrease** on this camera. |
+| Slew speeds | 24.5 °/s pan, 15 °/s tilt | Datasheet, at full stick. |
+| Tilt range | 90° total | Tilt is mechanically limited; both axes clamp at ±1. |
+| Stream | 1920×1080 @ 20 fps | Matches the camera; the RTSP caps advertise 20 fps. |
+| RTSP path | `/Streaming/channel/1` | Hikvision-style, unlike the old UNV path. All three paths stay mounted. |
+
+---
+
+## 8. Where things live
 
 ```
 ptz/
   ptz_sim.py               Host entry point. UDP command server + gimbal/zoom
                            publishing + pose replies + scene playback.
+  netz250.py               THE CAMERA MODEL — lens curves, ranges, quirks.
+                           Start here when something about the camera is wrong.
   scenes.py                Target-drone trajectories (the SCENES registry).
   ptz_sim_controller.py    Stand-alone copy of the Jetson-side controller, used only
                            by the local debug tools below. The pipeline itself uses
@@ -494,7 +594,10 @@ simulation/
   lib_manager.py           Runs the simulation libraries (the RTSP server).
   libraries/
     ros_image_to_rtp_lib.py  ROS image → H.264 → RTSP, plus the realism effects.
-  script_nodes/            Python OmniGraph nodes (zoom, bbox, sensors).
+  script_nodes/
+    zoom_node.py           Maps /isaac_core/zoom to the camera's focal length using
+                           the SAME measured curve as netz250.py (keep in sync).
+    bbox_node.py, sat_node.py, sensor_node.py
 
 extensions/                Isaac Sim extensions (coordinate math, position input,
                            sensor output).

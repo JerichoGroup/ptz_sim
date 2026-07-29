@@ -20,25 +20,31 @@ try:
 except ImportError:
     from ptz.scenes import run_scene
 
-
-# Camera lens constants (UNV IPC6852ER-X45-VF) — kept identical to
-# simulation/script_nodes/zoom_node.py so the angular response of relative moves
-# matches the rendered FOV at every zoom level.
-FOCAL_LENGTH_WIDE = 5.7      # mm
-FOCAL_LENGTH_TELE = 256.5    # mm
-HORIZONTAL_APERTURE = 2 * FOCAL_LENGTH_WIDE * math.tan(math.radians(59.5 / 2))  # ≈ 6.504 mm
+# Camera model — every physical constant and curve lives in netz250.py.
+try:
+    import netz250 as cam_model
+except ImportError:
+    from ptz import netz250 as cam_model
 
 
 class PTZSim:
     """
-    Host-side PTZ simulation controller.
+    Host-side emulation of the Netz-250 PTZ camera.
 
-    - Receives PTZ commands over UDP from Jetson (PTZSimController).
-    - Uses Isaac Sim via HostIsaacManager.
-    - ContinuousMove: 25 Hz integrator loop with TTL coalescing.
-    - Gimbal control via a persistent ROS2 publisher (no per-call node churn).
-    - Maintains internal zoom state (self._zoom); FOV not yet wired.
-    - Implements save_home() and go_home() with smooth cosine slewing.
+    Presents the same control surface the real camera exposes over ONVIF, so
+    DroneTracker's PTZSimController can mirror PTZController one-for-one.
+
+    State is held in the camera's own units, NOT in degrees:
+      - pan / tilt : ONVIF normalised [-1, +1]  (see netz250.PAN/TILT_DEG_PER_UNIT)
+      - zoom       : RAW ONVIF [-1, +1]         (the algorithm normalises to [0,1])
+
+    Faithful behaviours (see netz250.py for the numbers and the reasoning):
+      - AbsoluteMove snaps pan/tilt onto a coarse ~0.02 unit grid (real quirk).
+      - RelativeMove is near-exact, which is why fine centering uses it.
+      - Field of view follows the MEASURED pan-shift curve, not the camera's
+        overstated on-screen magnification.
+      - Tilt is mechanically limited; both axes clamp to [-1, +1].
+      - Zoom slews over ~4 s end-to-end.
     """
 
     def __init__(
@@ -50,8 +56,6 @@ class PTZSim:
         usd_path="./usd/maps/earth/earth.usda",
         show_isaac_logs=False,
         image_rtp=False,
-        pan_vel=60.0,   # deg/s at vx=1.0
-        tilt_vel=60.0,  # deg/s at vy=1.0
         cmd_ttl=0.15,   # seconds before a coalesced move command goes stale
         scene_start_delay_s=20.0,  # wait this long after Isaac loads before playing the scene
     ):
@@ -64,22 +68,24 @@ class PTZSim:
         self._last_cmd_addr = None
         self._addr_lock = threading.Lock()
 
-        # PTZ state — protected by _state_lock for R/M/W operations
+        # PTZ state — protected by _state_lock for R/M/W operations.
+        # pan/tilt in ONVIF units; zoom in RAW ONVIF units.
         self._pan = 0.0
         self._tilt = 0.0
         self._roll = 0.0
-        self._zoom = 0.0          # current published zoom (0 = wide)
-        self._zoom_target = 0.0   # target set by _apply_zoom; loop slews toward it
+        self._zoom_raw = cam_model.ZOOM_RAW_MIN          # wide end
+        self._zoom_target_raw = cam_model.ZOOM_RAW_MIN   # target the slew chases
         self._state_lock = threading.Lock()
 
-        # Home state
+        # Home state (pan/tilt in ONVIF units, zoom RAW)
         self._home_pan = None
         self._home_tilt = None
-        self._home_zoom = None
+        self._home_zoom_raw = None
 
-        # ContinuousMove coalescing slot
-        self._pan_vel = pan_vel
-        self._tilt_vel = tilt_vel
+        # ContinuousMove coalescing slot.  Datasheet slew rates, converted from
+        # deg/s into ONVIF units/s so the integrator works in camera units.
+        self._pan_units_per_s  = cam_model.PAN_SPEED_DEG_S  / cam_model.PAN_DEG_PER_UNIT
+        self._tilt_units_per_s = cam_model.TILT_SPEED_DEG_S / cam_model.TILT_DEG_PER_UNIT
         self._cmd_ttl = cmd_ttl
         self._cmd_vel = (0.0, 0.0)
         self._cmd_t = 0.0
@@ -199,18 +205,40 @@ class PTZSim:
         print(f"[Host] From {addr}: {msg}")
 
         if t == "move":
+            # ONVIF ContinuousMove — normalised velocity, TTL-coalesced.
             self._apply_move(msg["vx"], msg["vy"])
         elif t == "relative_move":
+            # ONVIF RelativeMove — near-exact small delta, no quantisation.
+            self._apply_relative(msg["dp"], msg["dt"])
+        elif t == "center_fine":
+            # Fine centering: RelativeMove, deliberately NOT quantised. This is
+            # what makes PTZController.center_fine() accurate at high zoom.
             self._apply_relative(msg["dp"], msg["dt"])
         elif t == "zoom_to":
-            self._apply_zoom(msg["target"])
+            # RAW ONVIF zoom target (the algorithm denormalises before sending).
+            self._apply_zoom_raw(msg["raw"] if "raw" in msg else msg["target"])
+        elif t == "absolute_move":
+            # ONVIF AbsoluteMove — pan/tilt snap to the coarse grid; any of the
+            # three axes may be omitted (None) to leave it untouched.
+            self._apply_absolute(msg.get("pan"), msg.get("tilt"), msg.get("zoom"))
         elif t == "center_and_zoom":
-            self._apply_relative(msg["dp"], msg["dt"])
-            self._apply_zoom(msg["zoom_target"])
+            if msg.get("use_absolute"):
+                # Netz-250 path: read-modify-write into ONE AbsoluteMove, exactly
+                # as the real controller does (pan_now + dp, tilt_now + dt, zoom).
+                with self._state_lock:
+                    pan_now, tilt_now = self._pan, self._tilt
+                self._apply_absolute(pan_now + float(msg["dp"]),
+                                     tilt_now + float(msg["dt"]),
+                                     msg.get("zoom_raw"))
+            else:
+                # Legacy IPC6852 path: RelativeMove + separate zoom.
+                self._apply_relative(msg["dp"], msg["dt"])
+                if msg.get("zoom_raw") is not None:
+                    self._apply_zoom_raw(msg["zoom_raw"])
         elif t == "save_home":
             self._save_home()
         elif t == "go_home":
-            self._go_home()
+            self._go_home(msg.get("zoom_raw"))
         elif t == "stop_all":
             self._stop_motion()
 
@@ -219,35 +247,66 @@ class PTZSim:
     # ------------------------------------------------------------------
 
     def _apply_move(self, vx, vy):
-        """Write latest-intent velocity to the coalescing slot."""
+        """ONVIF ContinuousMove: write normalised velocity to the coalescing slot.
+
+        ``vx``/``vy`` are ONVIF velocities in [-1,+1]; the integrator converts
+        them to units/s using the datasheet slew rates.
+        """
         with self._cmd_lock:
             self._cmd_vel = (float(vx), float(vy))
             self._cmd_t = time.time()
 
     def _apply_relative(self, dp, dt):
-        """One-shot delta move in ONVIF TranslationSpaceFov units: dp/dt are
-        fractions of the *current* field of view, where ±1.0 == half the current
-        HFoV of angular motion. Scaling is zoom-dependent (HFoV shrinks as we zoom
-        in), unlike the old constant 45°. Clears the coalescing slot so the mover
-        doesn't fight it."""
+        """ONVIF RelativeMove: add an exact delta in ONVIF pan/tilt units.
+
+        The real camera executes these near-exactly (0.005 commanded → 0.0049
+        measured), which is why DroneTracker uses RelativeMove for fine
+        centering.  Deliberately NOT snapped to the AbsoluteMove grid.  Clears
+        the coalescing slot so the mover doesn't fight it.
+        """
+        with self._cmd_lock:
+            self._cmd_vel = (0.0, 0.0)
+            self._cmd_t = 0.0
+        acc = cam_model.RELATIVE_MOVE_ACCURACY
+        with self._state_lock:
+            self._pan = cam_model.clamp_pan(self._pan + float(dp) * acc)
+            self._tilt = cam_model.clamp_tilt(self._tilt + float(dt) * acc)
+        self._update_gimbal()
+
+    def _apply_absolute(self, pan=None, tilt=None, zoom_raw=None):
+        """ONVIF AbsoluteMove: jump to an absolute pose.
+
+        Reproduces the real camera's quirk — pan/tilt targets snap onto a coarse
+        ~0.02 unit grid, so deltas smaller than half a grid step vanish entirely.
+        Zoom is exact and slews via _zoom_loop.
+        """
         with self._cmd_lock:
             self._cmd_vel = (0.0, 0.0)
             self._cmd_t = 0.0
         with self._state_lock:
-            fl = FOCAL_LENGTH_WIDE + self._zoom * (FOCAL_LENGTH_TELE - FOCAL_LENGTH_WIDE)
-            # HFoV/2 in degrees = degrees(atan(HA / (2·FL)))  (≈29.75° at wide end)
-            half_hfov = math.degrees(math.atan(HORIZONTAL_APERTURE / (2.0 * fl)))
-            # ENU: +yaw = CCW = pan left; +pitch = nose down. Flip the Jetson's
-            # frozen.fov_sign_x / fov_sign_y if a lock-on centers the wrong way.
-            self._pan  -= float(dp) * half_hfov
-            self._tilt -= float(dt) * half_hfov
+            if pan is not None:
+                self._pan = cam_model.clamp_pan(
+                    cam_model.quantize_absolute(float(pan)))
+            if tilt is not None:
+                self._tilt = cam_model.clamp_tilt(
+                    cam_model.quantize_absolute(float(tilt)))
+            if zoom_raw is not None:
+                self._zoom_target_raw = max(cam_model.ZOOM_RAW_MIN,
+                                            min(cam_model.ZOOM_RAW_MAX, float(zoom_raw)))
+            pan_q, tilt_q, ztgt = self._pan, self._tilt, self._zoom_target_raw
+        print(f"[Host] AbsoluteMove → pan={pan_q:+.4f} tilt={tilt_q:+.4f} "
+              f"zoom_raw={ztgt:+.3f} (pan/tilt snapped to {cam_model.ABSOLUTE_MOVE_GRID} grid)")
         self._update_gimbal()
 
-    def _apply_zoom(self, target):
-        """Set zoom target; _zoom_loop() will slew smoothly toward it."""
+    def _apply_zoom_raw(self, raw_target):
+        """Set the RAW zoom target; _zoom_loop slews toward it."""
         with self._state_lock:
-            self._zoom_target = float(max(0.0, min(1.0, target)))
-        print(f"[Host] Zoom target → {self._zoom_target:.3f}")
+            self._zoom_target_raw = max(cam_model.ZOOM_RAW_MIN,
+                                        min(cam_model.ZOOM_RAW_MAX, float(raw_target)))
+            tgt = self._zoom_target_raw
+        print(f"[Host] Zoom target → raw {tgt:+.3f} "
+              f"(norm {cam_model.normalize_zoom(tgt):.3f}, "
+              f"{cam_model.true_magnification(cam_model.normalize_zoom(tgt)):.1f}x)")
 
     def _stop_motion(self):
         """Halt continuous motion. Unlike the old stop_all, this does NOT shut the
@@ -257,13 +316,17 @@ class PTZSim:
             self._cmd_vel = (0.0, 0.0)
             self._cmd_t = 0.0
         with self._state_lock:
-            self._zoom_target = self._zoom   # stop slewing toward an old target
+            self._zoom_target_raw = self._zoom_raw   # stop slewing toward an old target
         print("[Host] stop_all → motion halted (sim stays running)")
 
     def _publish_zoom(self):
-        """Publish current _zoom value to the /isaac_core/zoom topic."""
+        """Publish zoom to Isaac on /isaac_core/zoom as NORMALISED [0,1].
+
+        zoom_node.py maps that to a focal length using the same measured curve.
+        """
         msg = Float32()
-        msg.data = self._zoom
+        with self._state_lock:
+            msg.data = float(cam_model.normalize_zoom(self._zoom_raw))
         try:
             self._zoom_pub.publish(msg)
         except Exception as e:
@@ -274,7 +337,14 @@ class PTZSim:
     # ------------------------------------------------------------------
 
     def _mover_loop(self):
-        """Keeps moving at the coalesced velocity until the command slot goes stale."""
+        """Integrates the coalesced ContinuousMove velocity until it goes stale.
+
+        Works in ONVIF units/s (datasheet deg/s ÷ deg-per-unit).  The sign
+        convention matches the real camera's ``continuous_pan_sign = -1`` /
+        ``continuous_tilt_sign = -1``: a POSITIVE vx makes the reported pan
+        DECREASE.  DroneTracker's config carries those same signs, so the two
+        agree; flip them there if a manual pan goes the wrong way.
+        """
         DT = 0.04  # 25 Hz
         while self._run:
             with self._cmd_lock:
@@ -285,36 +355,40 @@ class PTZSim:
 
             if not stale and not self._slewing_home:
                 with self._state_lock:
-                    self._pan  -= vx * self._pan_vel  * DT   # ENU: +yaw = CCW = pan left
-                    self._tilt -= vy * self._tilt_vel * DT   # ENU: +pitch = nose down
+                    self._pan = cam_model.clamp_pan(
+                        self._pan - vx * self._pan_units_per_s * DT)
+                    self._tilt = cam_model.clamp_tilt(
+                        self._tilt - vy * self._tilt_units_per_s * DT)
                 self._update_gimbal()
 
             time.sleep(DT)
 
     # ------------------------------------------------------------------
-    # 20 Hz zoom slew loop
+    # Zoom slew loop
     # ------------------------------------------------------------------
 
     def _zoom_loop(self):
-        """Moves _zoom toward _zoom_target at 1/7 normalised units per second (matching
-        the real camera's zoom_full_s=7.0), publishing whenever the value changes."""
-        DT = 0.05           # 20 Hz
-        MAX_STEP = DT / 7.0 # ≈ 0.00714 per tick → full range takes 7 s
+        """Slews RAW zoom toward the target at the camera's real travel rate.
+
+        ZOOM_FULL_TRAVEL_S covers the FULL raw span, matching the datasheet /
+        DroneTracker's ``zoom.full_travel_s`` so lock-on settle timing lines up.
+        """
+        DT = 0.05                                             # 20 Hz
+        span = cam_model.ZOOM_RAW_MAX - cam_model.ZOOM_RAW_MIN
+        MAX_STEP = span * DT / cam_model.ZOOM_FULL_TRAVEL_S
         while self._run:
             with self._state_lock:
                 if self._slewing_home:
-                    # slew_home_thread owns _zoom and publishing while slewing
+                    # slew_home_thread owns zoom and publishing while slewing
                     delta = 0.0
                 else:
-                    target = self._zoom_target
-                    current = self._zoom
-                    delta = target - current
+                    delta = self._zoom_target_raw - self._zoom_raw
                     if abs(delta) > 1e-6:
                         step = max(-MAX_STEP, min(MAX_STEP, delta))
-                        self._zoom = current + step
+                        self._zoom_raw += step
                     else:
                         delta = 0.0
-                        self._zoom = target
+                        self._zoom_raw = self._zoom_target_raw
             if abs(delta) > 1e-6:
                 self._publish_zoom()
             time.sleep(DT)
@@ -327,10 +401,17 @@ class PTZSim:
         with self._state_lock:
             self._home_pan = self._pan
             self._home_tilt = self._tilt
-            self._home_zoom = self._zoom
-        print(f"[Host] Home saved: pan={self._home_pan:.2f}, tilt={self._home_tilt:.2f}, zoom={self._home_zoom:.2f}")
+            self._home_zoom_raw = self._zoom_raw
+        print(f"[Host] Home saved: pan={self._home_pan:+.4f}, tilt={self._home_tilt:+.4f}, "
+              f"zoom_raw={self._home_zoom_raw:+.3f}")
 
-    def _go_home(self):
+    def _go_home(self, zoom_raw=None):
+        """Slew back to the saved home pose.
+
+        ``zoom_raw`` lets the Jetson specify the zoom to restore, mirroring
+        PTZController._do_go_home's choice of (home_zoom → pre-lock zoom →
+        search position).  Falls back to the locally saved home zoom.
+        """
         if self._home_pan is None:
             print("[Host] go_home called but no home saved.")
             return
@@ -342,19 +423,21 @@ class PTZSim:
             self._cmd_vel = (0.0, 0.0)
             self._cmd_t = 0.0
         print("[Host] Slewing back to home position...")
-        threading.Thread(target=self._slew_home_thread, daemon=True).start()
+        threading.Thread(target=self._slew_home_thread, args=(zoom_raw,),
+                         daemon=True).start()
 
-    def _slew_home_thread(self):
+    def _slew_home_thread(self, zoom_raw=None):
         self._slewing_home = True
 
         with self._state_lock:
             start_pan = self._pan
             start_tilt = self._tilt
-            start_zoom = self._zoom
+            start_zoom = self._zoom_raw
 
         end_pan = self._home_pan
         end_tilt = self._home_tilt
-        end_zoom = self._home_zoom
+        end_zoom = (float(zoom_raw) if zoom_raw is not None
+                    else self._home_zoom_raw)
 
         duration = 2.0
         steps = int(duration / 0.02)
@@ -364,16 +447,16 @@ class PTZSim:
                 break
             s = 0.5 - 0.5 * math.cos(math.pi * i / steps)  # ease-in-out
             with self._state_lock:
-                self._pan = start_pan + (end_pan - start_pan) * s
-                self._tilt = start_tilt + (end_tilt - start_tilt) * s
-                self._zoom = start_zoom + (end_zoom - start_zoom) * s
+                self._pan = cam_model.clamp_pan(start_pan + (end_pan - start_pan) * s)
+                self._tilt = cam_model.clamp_tilt(start_tilt + (end_tilt - start_tilt) * s)
+                self._zoom_raw = start_zoom + (end_zoom - start_zoom) * s
             self._update_gimbal()
             self._publish_zoom()
             time.sleep(0.02)
 
         # Sync target so the zoom loop doesn't re-slew after home completes
         with self._state_lock:
-            self._zoom_target = end_zoom
+            self._zoom_target_raw = end_zoom
         print("[Host] Home reached.")
         self._slewing_home = False
 
@@ -382,11 +465,18 @@ class PTZSim:
     # ------------------------------------------------------------------
 
     def _update_gimbal(self):
-        """Publish roll/pitch/yaw via persistent publisher — no per-call node creation."""
+        """Publish roll/pitch/yaw to Isaac, converting ONVIF units → degrees.
+
+        Pan/tilt are LINEAR in ONVIF units (180 deg per pan unit, 45 per tilt
+        unit).  Keeping the mapping linear is what makes a commanded delta shift
+        the image by the fraction the algorithm's measured curve predicts — the
+        zoom dependence lives in the field of view, not in the pan gain.
+        """
         msg = Gimbal()
-        msg.roll = self._roll
-        msg.pitch = self._tilt
-        msg.yaw = self._pan
+        with self._state_lock:
+            msg.roll = self._roll
+            msg.pitch = self._tilt * cam_model.TILT_DEG_PER_UNIT
+            msg.yaw = self._pan * cam_model.PAN_DEG_PER_UNIT
         try:
             self._gimbal_pub.publish(msg)
         except Exception as e:
@@ -458,11 +548,16 @@ class PTZSim:
                 with self._addr_lock:
                     addr = self._last_cmd_addr
             if addr is not None:
+                with self._state_lock:
+                    pan, tilt, zoom_raw = self._pan, self._tilt, self._zoom_raw
                 packet = {
                     "type": "pose",
-                    "pan": self._pan,
-                    "tilt": self._tilt,
-                    "zoom": self._zoom,
+                    # ONVIF units, exactly what GetStatus would report.
+                    "pan": pan,
+                    "tilt": tilt,
+                    # RAW ONVIF zoom — PTZController.get_pose() returns raw and
+                    # normalises separately, so the sim must match.
+                    "zoom": zoom_raw,
                     "timestamp": time.time(),
                 }
                 try:
