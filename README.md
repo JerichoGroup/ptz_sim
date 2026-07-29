@@ -355,7 +355,123 @@ refer to the terrain tile server and are unrelated to PTZ or video. Safe to igno
 
 ---
 
-## 6. Where things live
+## 6. Interface parity — real camera vs. simulated camera
+
+The whole point of this simulator is that **the tracking algorithm cannot tell the
+difference**. On the `DroneTracker` side that is enforced by two classes with the *same
+public interface*:
+
+| | Class | File |
+|---|---|---|
+| Real camera | `PTZController` | `dronetracker/ptz/controller.py` |
+| Simulated camera | `PTZSimController` | `dronetracker/ptz/sim_controller.py` |
+
+`PTZController` **defines** the interface (it is the real hardware contract);
+`PTZSimController` **follows** it, replacing ONVIF/SOAP calls with JSON-over-UDP.
+
+The pipeline never picks one itself — it accepts whichever it is handed:
+
+```python
+LivePtzPipeline(cfg, ptz=None)   # ptz=None  -> builds the real PTZController
+                                 # ptz=<obj> -> uses the injected controller
+```
+
+`run_live_ptz.py` passes nothing (real camera); `sim_motion_ptz_pipeline.py` injects a
+`PTZSimController`. That single optional argument is the *only* simulator-related change to
+the shared pipeline code.
+
+### Verified state (2026-07-29)
+
+The two public surfaces are **identical** — same method names, same signatures, nothing on
+one that is missing from the other:
+
+```
+autofocus_once()
+center_and_zoom(delta_pan, delta_tilt, zoom_target, space=None, parallel=True) -> bool
+get_pose()                      -> (pan, tilt, zoom, timestamp)
+go_home()
+move(vx, vy)
+save_home()
+stop_all()
+vel_scale()                     -> float
+zoom_in()   zoom_out()   zoom_to(t)
+```
+
+Plus the state the pipeline reads directly: `ready`, `connect_error`, `zoom_pos`,
+`_zooming`, `_rel_moving`.
+
+This is checked automatically, not by eye:
+`tests/test_sim_controller.py::test_public_surface_matches_real_controller` reflects over
+`PTZController` and asserts the sim matches it in **both** directions — a missing method
+*and* an extra method both fail the test. Run it with:
+
+```bash
+cd ~/clones/DroneTracker && python3 -m pytest tests/test_sim_controller.py -v
+```
+
+> An **extra** method on the sim is treated as a failure on purpose: it lets code work in
+> simulation and then break on the real camera, which is the exact bug class this simulator
+> is supposed to prevent.
+
+### What was reconciled to get there
+
+Four discrepancies were found and fixed on the `DroneTracker` side:
+
+| Issue | Why it mattered |
+|---|---|
+| `zoom_to()` had no busy-gate on the sim | The real `zoom_to()` only acts when neither `_zooming` nor `_rel_moving` is set, so the camera **silently ignores** a zoom requested mid-motion. The sim applied every one — so rapid `Z`/`X` presses, and zooms during a lock-on, behaved differently from the real thing. |
+| `center_and_zoom(dp, dt, …)` vs `(delta_pan, delta_tilt, …)` | Worked only because the caller passes those three positionally. Any keyword call would have raised on one class and not the other. |
+| Sim had `relative_move()`, `zoom_search()`, `zoom_track()`, `pid_move` | All four had been **deleted from the real controller**; none are called by the pipeline. Leaving them invited code that runs in simulation and fails on hardware. |
+| Sim had `trigger_autofocus()`, real has `autofocus_once()` | Same concept under two names. Renamed to the real one (still a no-op — there is no lens to focus). |
+
+### Behaviours that match by construction
+
+* **Lock-on geometry.** `center_and_zoom`'s `delta_pan`/`delta_tilt` are ONVIF
+  `TranslationSpaceFov` fractions — ±1.0 means half the *current* HFoV — so a nudge scales
+  with zoom. `ptz/ptz_sim.py`'s `_apply_relative()` derives `half_hfov` from the same lens
+  constants (`FOCAL_LENGTH_WIDE/TELE`) that `dronetracker/ptz/transform.py` uses, so the
+  same command produces the same angle at every zoom level.
+* **Velocity scaling.** `vel_scale()` uses the identical formula on both sides
+  (`max(min_vel_scale, 1 - zoom_pos·(1 - min_vel_scale))`), so arrow-key panning slows down
+  with zoom the same way. *(This was a real bug: the sim used an older FoV-ratio formula
+  long after the real controller switched to the linear one.)*
+* **Command coalescing.** `move()` is latest-intent on both sides and expires after
+  `cmd_ttl` (0.15 s), and both refuse to issue a `move` while a relative move is in flight
+  (a ContinuousMove would cancel it).
+* **Zoom travel time.** The simulator slews zoom over 7 s end-to-end, matching the real
+  lens's `zoom_full_s = 7.0`.
+* **Home.** The sim auto-saves home at the startup pose, mirroring the real controller's
+  connect-time home capture, so `go_home` works from the first frame.
+
+### Known asymmetries (deliberate, and safe)
+
+These exist because the transports genuinely differ. None are visible to the pipeline —
+verified by grepping every `_ptz.*` access in `pipeline/`, `apps/` and `rendering/`.
+
+| Only on the real controller | Why it is fine |
+|---|---|
+| `ptz`, `token` | ONVIF service handles — meaningless without a camera. |
+| `home_pos`, `home_zoom`, `kp_home`, `home_tol`, `home_timeout`, `home_max_vel` | Parameters for the real go-home control loop. The simulator slews home itself with a cosine ease, so the Jetson does not need them. |
+| `zoom_full_s` | See the caveat below. |
+| `_homing` | Internal to the real mover thread's Stop-suppression logic. |
+
+| Only on the sim controller | Why it is fine |
+|---|---|
+| `sock`, `host_addr`, `listen_port`, `pose` | UDP transport internals, the analogue of `ptz`/`token`. |
+
+Constructor arguments differ too, by necessity — the real one takes `ip/port/user/passwd`,
+the sim takes `host_ip/host_port/listen_port` plus `scene`. Nothing constructs these
+directly except `run_live_ptz.py` and `apps/sim_live_ptz.py`.
+
+> ⚠️ **One fidelity gap to be aware of:** `zoom.full_travel_s` in the Jetson's `config.yaml`
+> is passed to the real controller, and the Jetson's lock-on settle maths uses it — but it is
+> **not** sent to the simulator, which hardcodes 7 s in `_zoom_loop`. They agree at the
+> default of 7.0. If you ever change that config value, the simulator will not follow and
+> zoom timing will diverge. Worth wiring through the protocol if it becomes a real knob.
+
+---
+
+## 7. Where things live
 
 ```
 ptz/
