@@ -204,7 +204,24 @@ class Simulation:
         settings.set_bool("/omnihydra/parallelHydraSprimSync", False)
         settings.set_bool("/rtx/ecoMode/enabled", True)
         settings.set_bool("/app/player/useFixedTimeStepping", True)
-        settings.set_bool("/omni.graph.scriptnode/showWarnings", False)
+
+        # ── OmniGraph script nodes MUST be opted in ───────────────────────────
+        # Kit 105 added a security gate to omni.graph.scriptnode: unless the user
+        # opts in, it calls set_all_graphs_enabled(False) / disables every script
+        # node on the stage and (in GUI mode) pops a confirmation dialog.
+        #
+        # The failure is silent and very misleading: the REST of the ActionGraph
+        # keeps running, so the camera still moves via udp_to_global_position and
+        # video still streams — but zoom_node.py never executes, so zoom appears
+        # completely dead with no error anywhere.  Set both flags before the stage
+        # is opened (check_for_scriptnodes runs on stage attach).
+        settings.set_bool("/app/omni.graph.scriptnode/enable_opt_in", False)  # skip the check
+        settings.set_bool("/app/omni.graph.scriptnode/opt_in", True)         # and pre-approve
+
+        # Keep script-node warnings VISIBLE.  These were suppressed, which is why
+        # the opt-in problem above went undiagnosed — a broken script node looked
+        # identical to a working one.  Flip back to False if it ever gets noisy.
+        settings.set_bool("/omni.graph.scriptnode/showWarnings", True)
 
         kit.update()
 
