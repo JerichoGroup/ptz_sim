@@ -117,9 +117,13 @@ config needs **no simulator-specific URL at all** — sim and real camera differ
 
 Before encoding, a small **realism layer** is applied: a Gaussian *refocus blur* that ramps
 up and clears after each zoom change (mimicking the real lens hunting focus), plus drifting
-sprites — small fast "flies" and larger animated "birds" — so the detector sees the kind of
+sprites — small fast "flies" and animated "birds" — so the detector sees the kind of
 clutter it meets in the field. Everything is tunable via the `EFFECTS` dataclass at the top
 of that file.
+
+Birds spawn mostly in the **upper two thirds** of the frame (`top_frac` / `top_weight` on
+`SpriteKind` — currently 85% sky / 15% ground): a bird on the ground is not a relevant
+target, but the detector should still meet one occasionally.
 
 ### ④ Target drone — internal to the sim stand (UDP :33335)
 
@@ -336,6 +340,26 @@ The RTSP server is reachable but cannot serve video. Check `/tmp/ptz_sim_rtsp.lo
 * **`image_topic=25 fps` but `no client` forever** — frames are fine and the Jetson never
   actually reached *this* server. Almost always the stale-port case above.
 
+### Zoom does nothing / the image never changes field of view
+
+Zoom crosses two processes: `ptz_sim.py` publishes `/isaac_core/zoom`, and
+`simulation/script_nodes/zoom_node.py` (running **inside Isaac Sim**) turns that into a focal
+length. The Isaac side logs to its own file, so check it first:
+
+```bash
+tail -f /tmp/ptz_sim_zoom.log
+```
+
+| What you see | Meaning |
+|---|---|
+| `zoom=0.42 mag=2.1x FL=… HFoV=…` | Working — zoom is being applied. |
+| `WARNING: no messages on /isaac_core/zoom yet` | The node is alive but nothing is publishing. Is `ptz_sim.py` running? Did the Jetson send a zoom? |
+| `FATAL: camera prim not found` | `CAMERA_PRIM_PATH` in `zoom_node.py` doesn't match the loaded camera USD. |
+| nothing at all | The script node never ran. Its `scriptPath` is rewritten to an absolute path by `sim_app._update_script_node_paths()` — confirm the prim path there still matches the USD. |
+
+Note the host also prints `[Host] Zoom target → raw …` when a zoom command arrives, so you can
+tell a missing command apart from a command that arrived and wasn't applied.
+
 ### The Jetson prints `404 Not Found`
 
 The path is wrong. The simulator mounts `/Streaming/channel/1` (the Netz-250's main path),
@@ -541,6 +565,25 @@ magnification instead, lock-on would overshoot by 3–5× at zoom.
 > the trend using the *shape* of the on-screen curve, anchored to the last real measurement.
 > Extend `PAN_SHIFT_CURVE` / `TILT_SHIFT_CURVE` with measurements above 0.5 to remove the
 > guesswork. The algorithm has the same gap (its own curve lookup clamps at 0.5).
+
+### Pan/tilt direction
+
+The camera is ceiling-mounted (hanging upside down), and the algorithm's sign constants were
+tuned against that physical install. Two rules make the whole chain consistent:
+
+* **increasing ONVIF pan = look right**, **increasing ONVIF tilt = look up**
+  (`ptz_sim.py::_update_gimbal` negates both, because Isaac's ENU gimbal is the opposite
+  handedness: `+yaw` = CCW = left, `+pitch` = nose down);
+* `PTZSimController.move()` multiplies velocity by `continuous_pan_sign` / `continuous_tilt_sign`
+  (both `-1` here) before sending — exactly as `PTZController._mover` does, so the simulator
+  receives the same camera-frame velocity the real camera would.
+
+Both halves matter. Getting only one right is what produced the earlier symptom where the
+**arrow keys worked but lock-on moved away from the target** — the manual path went through two
+sign flips and cancelled out, while the centering path went through one.
+
+If a lock-on ever moves the wrong way, flip `frozen.fov_sign_x` / `fov_sign_y` in the Jetson's
+`config.yaml` — no code change needed.
 
 ### The AbsoluteMove grid quirk — reproduced on purpose
 

@@ -98,6 +98,13 @@ class SpriteKind:
     jitter:    float = 0.6                # per-frame velocity wander
     anim_hold: int   = 3                  # rendered frames each GIF frame is shown
     gray:      int   = 25                 # fallback square shade if images missing
+    # Vertical spawn bias.  `top_frac` marks the boundary between the "sky" band
+    # (top of frame) and the "ground" band below it; `top_weight` is the
+    # probability a new sprite spawns in the sky band.  Birds sitting on the
+    # ground are not interesting targets, so they should be rare down there —
+    # but not absent, since the detector should still meet them occasionally.
+    top_frac:   float = 1.0               # 1.0 = spawn anywhere (no bias)
+    top_weight: float = 1.0
 
 
 def _default_kinds():
@@ -110,15 +117,18 @@ def _default_kinds():
             speed_min=10.0, speed_max=70.0,
             life_min=25, life_max=120, gap_min=8, gap_max=70,
             alpha=0.85, jitter=0.9),
-        # Birds: smaller-than-before, slow, rare (0–1, ~half the fly rate),
-        # animated from flapping-bird GIFs.
+        # Birds: slow, rare (0–1, ~half the fly rate), animated from flapping-bird
+        # GIFs.  Sized 30% smaller than the original tuning.  Spawn mostly in the
+        # upper two thirds of the frame — a bird on the ground is not a relevant
+        # target, so only ~15% appear in the bottom third.
         SpriteKind(
             name="bird",
             images=_gifs("bird1.gif", "bird2.gif", "bird3.gif", "bird4.gif", "bird5.gif"),
-            count=1, size_min=14, size_max=40,
+            count=1, size_min=10, size_max=28,
             speed_min=2.0, speed_max=12.0,
             life_min=70, life_max=240, gap_min=90, gap_max=260,
-            alpha=0.92, jitter=0.35, anim_hold=3),
+            alpha=0.92, jitter=0.35, anim_hold=3,
+            top_frac=2.0 / 3.0, top_weight=0.85),
     ]
 
 
@@ -131,7 +141,8 @@ class FrameEffectsConfig:
     max_blur:        float = 1.0    # 0..1 overall blur strength (scales blur_max_sigma)
     blur_time:       float = 2.0    # s: total refocus settle window after a zoom
     blur_peak_frac:  float = 0.4    # fraction of blur_time where blur peaks (≈0.8 s)
-    blur_max_sigma:  float = 9.0    # Gaussian sigma (px) at full intensity; ↑ = blurrier
+    blur_max_sigma:  float = 10.8   # Gaussian sigma (px) at full intensity; ↑ = blurrier
+                                    # (was 9.0 — raised 20% for a stronger refocus)
     blur_rearm_gap:  float = 0.3    # s gap between zoom changes that starts a NEW blur
     zoom_topic:      str   = "/isaac_core/zoom"
     zoom_epsilon:    float = 1e-4   # min zoom delta counted as "a zoom happened"
@@ -286,7 +297,7 @@ class FrameEffects:
             frames = None
             sw = sh = size
         return {
-            "x": random.uniform(0, w), "y": random.uniform(0, h),
+            "x": random.uniform(0, w), "y": self._spawn_y(k, h),
             "vx": speed * math.cos(ang), "vy": speed * math.sin(ang),
             "sw": sw, "sh": sh, "gray": k.gray,
             "life": random.randint(k.life_min, k.life_max),
@@ -295,6 +306,21 @@ class FrameEffects:
             "fidx": 0,                              # current animation frame
             "fhold": k.anim_hold,                   # ticks left on the current frame
         }
+
+    @staticmethod
+    def _spawn_y(k, h):
+        """Pick a spawn row, biased toward the sky band (see SpriteKind.top_frac).
+
+        With top_frac=2/3 and top_weight=0.85, 85% of sprites start somewhere in
+        the upper two thirds and 15% in the bottom third — so ground-level birds
+        still occur, just rarely.
+        """
+        split = max(0.0, min(1.0, k.top_frac)) * h
+        if k.top_weight >= 1.0 or split >= h:
+            return random.uniform(0, h)
+        if random.random() < k.top_weight:
+            return random.uniform(0, split)
+        return random.uniform(split, h)
 
     def _ensure_particles(self, w, h):
         if self._noise_dims == (w, h):

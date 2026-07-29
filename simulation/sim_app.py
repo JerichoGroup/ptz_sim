@@ -278,6 +278,11 @@ class Simulation:
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         script_nodes_map = {
+                # The zoom node lives in the map's camera graph; without this its
+                # scriptPath stays whatever absolute path was baked into the USD
+                # on someone else's machine, and zoom silently stops working.
+                "/ActionGraph/script_node":
+                    os.path.join(base_dir, "script_nodes", "zoom_node.py"),
                 "/Environment/bbox_publisher/BboxPublisher/script_node":
                     os.path.join(base_dir, "script_nodes", "bbox_node.py"),
                 "/Environment/distance_sensor/ActionGraph/laser_depth_node":

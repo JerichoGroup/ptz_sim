@@ -148,6 +148,11 @@ class PTZSim:
             print("[Host] Isaac Sim started.")
             try:
                 self._init_camera_position()
+                # Push the starting zoom so Isaac's zoom_node sets the wide-end
+                # focal length immediately.  Without this the camera keeps
+                # whatever focal length the USD was authored with until the first
+                # zoom command arrives, so the initial FOV would be wrong.
+                self._publish_zoom()
                 # Auto-capture home at the startup pose (0/0/0), mirroring the
                 # real controller's connect-time home capture — so the Jetson's
                 # automatic go_home (R-key, TRACK→IDLE reset) works from the start.
@@ -467,16 +472,28 @@ class PTZSim:
     def _update_gimbal(self):
         """Publish roll/pitch/yaw to Isaac, converting ONVIF units → degrees.
 
-        Pan/tilt are LINEAR in ONVIF units (180 deg per pan unit, 45 per tilt
-        unit).  Keeping the mapping linear is what makes a commanded delta shift
-        the image by the fraction the algorithm's measured curve predicts — the
-        zoom dependence lives in the field of view, not in the pan gain.
+        Sign convention — derived from the algorithm's own tuning, do not "fix"
+        one half of it in isolation:
+
+          * increasing ONVIF pan  = camera looks RIGHT
+          * increasing ONVIF tilt = camera looks UP
+
+        Why: lock-on centres a target at normalised offset ex>0 (right of centre)
+        with ``dx = fov_sign_x · gain · ex / spp`` and ``fov_sign_x = +1``, i.e. a
+        POSITIVE pan delta must move the view toward a target on the right.
+        Likewise ``fov_sign_y = -1`` means a target below centre (ey>0) yields a
+        NEGATIVE tilt delta, so decreasing tilt must look down.
+
+        Isaac's ENU gimbal is the opposite handedness on both axes (+yaw = CCW =
+        left, +pitch = nose down), hence the negation here.  Pan/tilt stay LINEAR
+        in ONVIF units — the zoom dependence lives in the field of view, not in
+        the pan gain (see netz250.py).
         """
         msg = Gimbal()
         with self._state_lock:
             msg.roll = self._roll
-            msg.pitch = self._tilt * cam_model.TILT_DEG_PER_UNIT
-            msg.yaw = self._pan * cam_model.PAN_DEG_PER_UNIT
+            msg.pitch = -self._tilt * cam_model.TILT_DEG_PER_UNIT
+            msg.yaw = -self._pan * cam_model.PAN_DEG_PER_UNIT
         try:
             self._gimbal_pub.publish(msg)
         except Exception as e:

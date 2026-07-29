@@ -21,7 +21,9 @@ an OmniGraph script node, so it cannot import from the repo).
 """
 
 import math
+import os
 import threading
+import time
 import omni.usd
 import rclpy
 import numpy as np
@@ -82,6 +84,23 @@ def _focal_length_mm(z):
 
 FOCAL_LENGTH_WIDE = _focal_length_mm(0.0)
 
+# ── Diagnostics ──────────────────────────────────────────────────────────────
+# This node runs INSIDE Isaac Sim, whose stdout is hidden unless
+# show_isaac_logs=True. Mirror to a file so zoom problems can be diagnosed with
+#   tail -f /tmp/ptz_sim_zoom.log
+# without turning on the whole Isaac firehose.
+_DIAG_PATH = os.environ.get("PTZ_ZOOM_LOG", "/tmp/ptz_sim_zoom.log")
+
+
+def _diag(msg):
+    line = f"[zoom_node] {msg}"
+    print(line, flush=True)
+    try:
+        with open(_DIAG_PATH, "a") as fh:
+            fh.write(f"{time.strftime('%H:%M:%S')} {line}\n")
+    except Exception:
+        pass
+
 
 # ── ROS2 subscriber ───────────────────────────────────────────────────────────
 
@@ -123,17 +142,21 @@ class ZoomSubscriber:
 # ── Script node interface ─────────────────────────────────────────────────────
 
 def setup(db):
+    _diag(f"setup() starting — diagnostics also at {_DIAG_PATH}")
     if not rclpy.ok():
         try:
             rclpy.init()
         except Exception as e:
+            _diag(f"FATAL: rclpy.init() failed: {e}")
             raise RuntimeError("zoom_node: failed to init rclpy") from e
 
     stage = omni.usd.get_context().get_stage()
     camera_prim = stage.GetPrimAtPath(CAMERA_PRIM_PATH)
 
     if not camera_prim.IsValid():
-        print(f"[zoom_node] WARNING: camera prim not found at '{CAMERA_PRIM_PATH}'")
+        _diag(f"FATAL: camera prim not found at '{CAMERA_PRIM_PATH}' — zoom will "
+              f"NOT work. This path must match the udp_camera USD "
+              f"(sim_utils.OPTIONAL_USDS['com_udp']).")
         db.internal_state.focal_attr = None
     else:
         cam = UsdGeom.Camera(camera_prim)
@@ -144,7 +167,7 @@ def setup(db):
         cam.GetFocalLengthAttr().Set(float(FOCAL_LENGTH_WIDE))   # start at wide
 
         db.internal_state.focal_attr = cam.GetFocalLengthAttr()
-        print(f"[zoom_node] camera ready (Netz-250) — HA={HORIZONTAL_APERTURE:.3f} mm  "
+        _diag(f"camera ready (Netz-250) — HA={HORIZONTAL_APERTURE:.3f} mm  "
               f"VA={VERTICAL_APERTURE:.3f} mm  FL={FOCAL_LENGTH_WIDE:.2f} mm "
               f"(HFoV {_hfov_deg(0.0):.1f}°) → {_focal_length_mm(1.0):.2f} mm "
               f"(HFoV {_hfov_deg(1.0):.1f}°)")
@@ -153,25 +176,46 @@ def setup(db):
     sub.subscribe()
     db.internal_state.zoom_subscriber = sub
     db.internal_state.last_zoom = None
-    print("[zoom_node] setup complete")
+    db.internal_state.n_msgs = 0
+    db.internal_state.last_report = 0.0
+    _diag(f"setup complete — subscribed to {ZOOM_TOPIC}")
 
 
 def compute(db):
-    zoom = db.internal_state.zoom_subscriber.zoom
+    st = db.internal_state
+    zoom = st.zoom_subscriber.zoom
 
-    if zoom is None or zoom == db.internal_state.last_zoom:
+    # Heartbeat every ~5 s: makes "no zoom messages arriving" obvious instead of
+    # looking identical to "zoom arriving but not applied".
+    now = time.time()
+    if now - getattr(st, "last_report", 0.0) > 5.0:
+        st.last_report = now
+        if st.focal_attr is None:
+            _diag("WARNING: no camera prim — zoom cannot be applied")
+        elif zoom is None:
+            _diag(f"WARNING: no messages on {ZOOM_TOPIC} yet "
+                  f"(is ptz_sim.py running and publishing?)")
+        else:
+            _diag(f"alive — last zoom={zoom:.3f}, applied={st.last_zoom}, "
+                  f"msgs={st.n_msgs}")
+
+    if zoom is None or zoom == st.last_zoom:
         return True
-    if db.internal_state.focal_attr is None:
+    if st.focal_attr is None:
         return True
 
     zoom = max(0.0, min(1.0, zoom))
     focal_length = _focal_length_mm(zoom)
-    db.internal_state.focal_attr.Set(float(focal_length))
-    db.internal_state.last_zoom = zoom
+    try:
+        st.focal_attr.Set(float(focal_length))
+    except Exception as e:
+        _diag(f"ERROR setting focalLength: {e}")
+        return True
+    st.last_zoom = zoom
+    st.n_msgs = getattr(st, "n_msgs", 0) + 1
 
-    hfov = _hfov_deg(zoom)
-    print(f"[zoom_node] zoom={zoom:.3f}  mag={_true_magnification(zoom):.2f}x  "
-          f"FL={focal_length:.2f} mm  HFoV={hfov:.2f}°")
+    _diag(f"zoom={zoom:.3f}  mag={_true_magnification(zoom):.2f}x  "
+          f"FL={focal_length:.2f} mm  HFoV={_hfov_deg(zoom):.2f}°")
 
     return True
 
