@@ -6,25 +6,33 @@ import time
 import math
 
 import rclpy
-from isaac_ros2_messages.msg import Gimbal
+from isaac_ros2_messages.msg import Gimbal, FrameBboxes
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import Float32
 
 from isaac_core_dev_kit.isaac_manager.host_isaac_manager import HostIsaacManager
 from isaac_core_dev_kit.udp.one_point_sender import OnePointSender
 import isaac_core_dev_kit.dev_utils as core_utils
 
-# Scene library (sibling module). Run as `python3 ./ptz/ptz_sim.py` puts ptz/ on
-# sys.path[0]; fall back to the package path if imported differently.
+# Scene library + the simulated target drone (sibling modules). Run as
+# `python3 ./ptz/ptz_sim.py` puts ptz/ on sys.path[0]; fall back to the package
+# path if imported differently.
 try:
-    from scenes import run_scene
+    import scenes
+    from drone import SimDrone
 except ImportError:
-    from ptz.scenes import run_scene
+    from ptz import scenes
+    from ptz.drone import SimDrone
 
 # Camera model — every physical constant and curve lives in netz250.py.
 try:
     import netz250 as cam_model
 except ImportError:
     from ptz import netz250 as cam_model
+
+# The bbox publisher reports every child of /bboxes; this is the target drone.
+DRONE_TARGET_NAME = "full_drone"
+BBOX_TOPIC = "/isaac_core/bbox"
 
 
 class PTZSim:
@@ -58,7 +66,7 @@ class PTZSim:
         image_rtp=False,
         bbox_publisher=False,
         cmd_ttl=0.15,   # seconds before a coalesced move command goes stale
-        scene_start_delay_s=20.0,  # wait this long after Isaac loads before playing the scene
+        drone_speed_ms=10.0,       # target-drone speed at full stick (manual flight)
     ):
         self.listen_port = listen_port
         # Optional explicit pose target for a directly-routable setup. Default
@@ -100,9 +108,16 @@ class PTZSim:
         # from the command channel; the START DELAY is configured here. The scene
         # is (re)played once per NEW session, so quitting the Jetson, changing
         # sim.scene, and re-running replays the scene.
-        self._scene_start_delay_s = scene_start_delay_s
-        self._requested_scene = None   # set from received packets; None = not told yet
-        self._session_id = None        # latest Jetson session token (from the heartbeat)
+        # The simulated target drone.  It needs the camera's live pan so that
+        # "forward"/"right" stay relative to wherever the camera is looking.
+        self._drone = SimDrone(pan_getter=lambda: self._pan,
+                              speed_ms=drone_speed_ms)
+        # Latest telemetry for the drone, harvested from the bbox publisher.
+        self._drone_tlm = None
+        self._drone_tlm_lock = threading.Lock()
+        self._last_drone_vel = None   # last logged manual-flight direction
+        self._bbox_msgs = 0        # bbox frames received from Isaac
+        self._drone_tlm_n = 0      # of those, how many carried the target drone
 
         # Isaac/ROS setup — must happen before threads start so _update_gimbal is safe
         core_utils.delete_cesium_cache()
@@ -110,6 +125,25 @@ class PTZSim:
         self._gimbal_node = rclpy.create_node("ptz_sim_gimbal_node")
         self._gimbal_pub = self._gimbal_node.create_publisher(Gimbal, "/isaac_core/gimbal", 10)
         self._zoom_pub   = self._gimbal_node.create_publisher(Float32, "/isaac_core/zoom", 10)
+        # Target-drone telemetry.  bbox_node publishes every child of /bboxes with
+        # distance_x/y/z already computed as (target - camera) in world metres, so
+        # the range readout comes straight off this topic.
+        #
+        # The QoS must be BEST_EFFORT.  bbox_node publishes with
+        # qos_profile_sensor_data (BEST_EFFORT), and a RELIABLE subscriber is
+        # INCOMPATIBLE with a BEST_EFFORT publisher — DDS silently delivers
+        # nothing, so the topic looks healthy under `ros2 topic echo` (which
+        # adapts) while this node receives zero frames.  Measured: RELIABLE got
+        # 0 frames in 6 s, BEST_EFFORT got 3.
+        bbox_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+        self._bbox_sub = self._gimbal_node.create_subscription(
+            FrameBboxes, BBOX_TOPIC, self._on_bboxes, bbox_qos)
+        threading.Thread(target=self._ros_spin_loop, daemon=True,
+                         name="ptz-sim-ros-spin").start()
 
         # Networking — ONE socket for both receiving commands and sending pose.
         # Pose MUST go out from this socket (the port the Jetson addressed) so the
@@ -159,14 +193,23 @@ class PTZSim:
                 # real controller's connect-time home capture — so the Jetson's
                 # automatic go_home (R-key, TRACK→IDLE reset) works from the start.
                 self._save_home()
-                # Isaac is loaded now → start the scene-playback timer.
-                threading.Thread(target=self._scene_loop, daemon=True).start()
+                # The target drone is NOT spawned yet: it appears in front of the
+                # camera only when the operator asks for it (scene 1-9, or 0 for
+                # manual flight).  Spawning eagerly would put a drone in shot on
+                # every boot.
+                print(f"[Host] target drone on demand — press 1-"
+                      f"{max(scenes.available_scenes())} for a scene, "
+                      f"0 for manual numpad flight")
                 while self._run:
                     time.sleep(1.0)
             except KeyboardInterrupt:
                 print("[Host] KeyboardInterrupt, shutting down.")
             finally:
                 self._run = False
+                try:
+                    self._drone.close()
+                except Exception:
+                    pass
                 self._gimbal_node.destroy_node()
                 core_utils.safe_rclpy_shutdown()
 
@@ -188,17 +231,6 @@ class PTZSim:
                 msg = json.loads(data.decode("utf-8"))
             except Exception:
                 continue
-            # The Jetson carries the requested scene on the command channel
-            # (typically on the heartbeat ping). Capture it from any packet that
-            # has it, before the ping early-return in _handle_cmd.
-            if isinstance(msg, dict):
-                if msg.get("scene") is not None:
-                    try:
-                        self._requested_scene = int(msg["scene"])
-                    except (TypeError, ValueError):
-                        pass   # ignore a malformed scene value; don't kill the recv loop
-                if msg.get("session") is not None:
-                    self._session_id = msg["session"]
             self._handle_cmd(msg, addr)
 
     # ------------------------------------------------------------------
@@ -209,7 +241,17 @@ class PTZSim:
         t = msg.get("type")
         if t == "ping":
             return   # heartbeat: only refreshes the reply address (done in _recv_loop)
-        print(f"[Host] From {addr}: {msg}")
+        if t == "drone_vel":
+            # Can arrive on every key repeat, so log only when the direction
+            # actually changes — enough to prove commands are arriving without
+            # flooding the console.
+            vec = (msg.get("fwd", 0.0), msg.get("right", 0.0), msg.get("up", 0.0))
+            if vec != self._last_drone_vel:
+                self._last_drone_vel = vec
+                print(f"[Host] drone_vel fwd={vec[0]:+.0f} right={vec[1]:+.0f} "
+                      f"up={vec[2]:+.0f}")
+        else:
+            print(f"[Host] From {addr}: {msg}")
 
         if t == "move":
             # ONVIF ContinuousMove — normalised velocity, TTL-coalesced.
@@ -248,6 +290,23 @@ class PTZSim:
             self._go_home(msg.get("zoom_raw"))
         elif t == "stop_all":
             self._stop_motion()
+
+        # ── Target-drone control (simulator-only; no real-camera equivalent) ──
+        elif t == "scene":
+            # 0 = manual joystick mode, 1..9 = play that canned scene.
+            num = int(msg.get("n", 0))
+            if num == 0:
+                self._drone.set_joystick_mode(True)
+            else:
+                self._drone.play_scene(num)
+        elif t == "drone_vel":
+            # Camera-relative stick, each component -1..+1.
+            self._drone.set_velocity(msg.get("fwd", 0.0),
+                                     msg.get("right", 0.0),
+                                     msg.get("up", 0.0))
+        elif t == "drone_stop":
+            self._drone.stop_scene()
+            self._drone.set_joystick_mode(False)
 
     # ------------------------------------------------------------------
     # PTZ motion logic
@@ -508,8 +567,9 @@ class PTZSim:
     def _init_camera_position(self):
         # Send at 30 Hz for 3 s so the packet lands regardless of when Isaac Sim's
         # UDP receiver finishes initialising after the HostIsaacManager ready signal.
-        sender = OnePointSender(lat=32.20647, lon=35.29034, alt=540.0,
-                                roll=0.0, pitch=0.0, yaw=90.0)
+        cam = scenes.CAMERA
+        sender = OnePointSender(lat=cam["lat"], lon=cam["lon"], alt=cam["alt"],
+                                roll=0.0, pitch=0.0, yaw=cam["yaw_deg"])
         sender.run(blocking=False)
         time.sleep(3.0)
         sender.stop()
@@ -519,39 +579,88 @@ class PTZSim:
     # Scene playback
     # ------------------------------------------------------------------
 
-    def _scene_loop(self):
-        """Play the Jetson-requested scene once per NEW session.
+    # ------------------------------------------------------------------
+    # Target-drone telemetry (from the bbox publisher)
+    # ------------------------------------------------------------------
 
-        Started right after Isaac loads, so the first scene runs ~scene_start_delay_s
-        after load. Each new Jetson session (new sim_motion launch → new session
-        token) re-arms playback, so quit → change sim.scene → re-run replays it.
-        The delay before each play lets the (re)launched pipeline warm up first.
+    def _ros_spin_loop(self):
+        """Spin the ROS node so the bbox subscription delivers callbacks.
+
+        Also reports the state of the telemetry stream every 10 s, because "no
+        range readout" has three very different causes and they are otherwise
+        indistinguishable from the GUI.
         """
-        last_played_session = None
+        last_report = time.time()
+        last_msgs = 0
         while self._run:
-            session = self._session_id
-            if session is None or session == last_played_session:
-                time.sleep(0.2)
-                continue
-
-            # New session detected — arm playback for it after a settle delay.
-            last_played_session = session
-            t_arm = time.time()
-            while self._run and time.time() - t_arm < self._scene_start_delay_s:
-                time.sleep(0.2)
-            if not self._run:
-                return
-
-            scene = self._requested_scene
-            if not scene:   # 0 (or None) → scene playback disabled for this session
-                print(f"[Host] session {session}: scene playback disabled (sim.scene=0)")
-                continue
-            print(f"[Host] starting scene {scene} for session {session} "
-                  f"({self._scene_start_delay_s:.0f}s settle)")
             try:
-                run_scene(scene)   # blocking; finite trajectory
-            except Exception as e:
-                print(f"[Host] scene {scene} error: {e}")
+                rclpy.spin_once(self._gimbal_node, timeout_sec=0.1)
+            except Exception:
+                time.sleep(0.1)
+
+            now = time.time()
+            if now - last_report < 10.0:
+                continue
+            last_report = now
+            if self._bbox_msgs == last_msgs:
+                if self._bbox_msgs == 0:
+                    print(f"[Host] no bbox messages on {BBOX_TOPIC} — the range "
+                          f"readout will stay empty. Is --bbox-publisher enabled "
+                          f"and is the bbox script node running?")
+                else:
+                    print(f"[Host] bbox stream stalled at {self._bbox_msgs} frames")
+            elif self._drone_tlm_n == 0:
+                print(f"[Host] {self._bbox_msgs} bbox frames received but none "
+                      f"contained '{DRONE_TARGET_NAME}' — no range readout")
+            last_msgs = self._bbox_msgs
+
+    def _on_bboxes(self, msg):
+        """Pick the target drone out of the frame's bboxes and cache its offset.
+
+        ``distance_x/y/z`` come from bbox_node as (target_pos - camera_pos) in
+        Isaac world metres (ENU: x=east, y=north, z=up).  This is CLOSED-LOOP
+        data: it is the drone's actual rendered world pose, not where we told it
+        to go, so it reflects whatever Isaac really did.
+
+        NOTE: the message's lat/lon/alt are read from the prim's cesium anchor
+        attributes, which are NOT updated as the drone flies, so they are ignored
+        here — the distances come from live world poses and are trustworthy.
+        """
+        self._bbox_msgs += 1
+        names = [b.target_name for b in msg.bboxes]
+        if self._bbox_msgs == 1:
+            print(f"[Host] bbox stream up — targets seen: {names or '(none)'}")
+            if DRONE_TARGET_NAME not in names:
+                print(f"[Host] WARNING: '{DRONE_TARGET_NAME}' is not among the bbox "
+                      f"targets, so there will be no range readout. bbox_node only "
+                      f"reports children of /bboxes.")
+
+        for b in msg.bboxes:
+            if b.target_name != DRONE_TARGET_NAME:
+                continue
+            east, north, up = float(b.distance_x), float(b.distance_y), float(b.distance_z)
+            # Rotate the world offset into the camera's own frame so the operator
+            # sees forward/right/up rather than compass directions.
+            bearing = math.radians(self._drone_bearing_offset())
+            fwd = east * math.sin(bearing) + north * math.cos(bearing)
+            right = east * math.cos(bearing) - north * math.sin(bearing)
+            with self._drone_tlm_lock:
+                self._drone_tlm = {
+                    "fwd": fwd, "right": right, "up": up,
+                    "range": math.sqrt(east * east + north * north + up * up),
+                    "in_frame": bool(b.in_frame),
+                    "visible": bool(b.is_visible),
+                }
+            self._drone_tlm_n += 1
+            return
+
+    def _drone_bearing_offset(self):
+        """Camera bearing in degrees — same convention SimDrone flies with."""
+        from drone import (CAMERA_AZIMUTH_AT_PAN_ZERO_DEG,
+                           CAMERA_AZIMUTH_PER_PAN_DEG)
+        with self._state_lock:
+            pan = self._pan
+        return CAMERA_AZIMUTH_AT_PAN_ZERO_DEG + CAMERA_AZIMUTH_PER_PAN_DEG * pan
 
     # ------------------------------------------------------------------
     # Pose updates back to Jetson
@@ -579,6 +688,14 @@ class PTZSim:
                     "zoom": zoom_raw,
                     "timestamp": time.time(),
                 }
+                # Simulator-only extra: target-drone offset for the GUI readout.
+                # Rides along on the pose packet so it needs no extra socket and
+                # inherits the same reply-to-sender NAT behaviour.
+                with self._drone_tlm_lock:
+                    tlm = self._drone_tlm
+                packet["drone"] = tlm            # None when no drone/bbox yet
+                packet["scene"] = self._drone.scene
+                packet["joystick"] = self._drone.joystick_on
                 try:
                     # Send from the command socket so the reply matches the NAT
                     # conntrack entry and reaches the Jetson.
@@ -608,9 +725,8 @@ if __name__ == "__main__":
     JETSON_IP = os.environ.get("PTZ_JETSON_IP")            # None → reply-to-sender
     JETSON_PORT = int(os.environ.get("PTZ_JETSON_PORT", "5006"))
 
-    # Seconds to wait after Isaac finishes loading before playing the scene the
-    # Jetson requested. Override with PTZ_SCENE_DELAY_S.
-    SCENE_START_DELAY_S = float(os.environ.get("PTZ_SCENE_DELAY_S", "20.0"))
+    # Target-drone speed at full stick during manual (numpad) flight, m/s.
+    DRONE_SPEED_MS = float(os.environ.get("PTZ_DRONE_SPEED_MS", "10.0"))
 
     sim = PTZSim(
         listen_port=5005,
@@ -621,6 +737,6 @@ if __name__ == "__main__":
         show_isaac_logs=False,
         image_rtp=True,
         bbox_publisher=True,
-        scene_start_delay_s=SCENE_START_DELAY_S,
+        drone_speed_ms=DRONE_SPEED_MS,
     )
     sim.run()

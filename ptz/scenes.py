@@ -1,95 +1,169 @@
-"""Scene library for the PTZ simulator.
+"""Scene library — the canned flight paths the simulated target drone can fly.
 
-A *scene* flies a simulated target (a ``UdpBot`` drone) through a trajectory so
-the Jetson's tracker has something to detect and lock onto. The Jetson selects a
-scene by number via its config (``sim.scene``); that number is carried over the
-existing PTZ command channel, and ``ptz_sim`` plays the scene a configurable
-delay after Isaac Sim finishes loading.
+═══════════════════════════════════════════════════════════════════════════════
+ HOW TO ADD OR CHANGE A SCENE  (no programming needed)
+═══════════════════════════════════════════════════════════════════════════════
 
-Adding a scene:
-  1. Write a ``def scene_N(bot): ...`` that drives ``bot`` (a fresh ``UdpBot``).
-  2. Register it in ``SCENES`` below.
-The bot is created, started, and closed for you by ``run_scene`` — a scene body
-just issues movement commands (which block for their ``duration_s``).
+A scene is just a numbered list of moves.  Copy an existing block, change the
+number, the name and the moves.  Press the matching number key (1-9) in the
+DroneTracker window to fly it.
+
+Every move is one line:
+
+    {"move": "forward", "meters": 100, "seconds": 4},
+
+  "move"    – which direction (see the table below)
+  "meters"  – how far to travel
+  "seconds" – how long the move should take (so 100 m in 4 s = 25 m/s)
+
+Directions are **relative to the camera**, exactly like the numpad joystick:
+
+    forward    away from the camera        backward   toward the camera
+    right      to the camera's right       left       to the camera's left
+    up         gain altitude               down       lose altitude
+
+Two extra moves are available:
+
+    {"move": "wait", "seconds": 3}                       – hover in place
+    {"move": "goto", "lat": 32.2065, "lon": 35.2903,
+     "alt": 540, "seconds": 5}                           – fly to a fixed point
+
+The drone always starts a scene at the same place — a fixed distance in front of
+the camera (see SPAWN_OFFSET below) — so scenes are repeatable.
+
+Tips
+  • Small "seconds" for a fast pass, large for a slow crawl.
+  • A drone flying "forward" gets smaller/harder to see — good for range tests.
+  • Keep total time sensible; the scene ends when the last move finishes and the
+    drone then just hovers where it stopped.
+═══════════════════════════════════════════════════════════════════════════════
 """
 
-import time  # noqa: F401  (handy for future scenes that want explicit pauses)
-
-from isaac_core_dev_kit.udp.udp_bot import UdpBot
-
-
-# UDP port Isaac Sim listens on for the target/drone prim (matches nirchuk.py).
+# UDP port Isaac Sim listens on for the target drone prim (/bboxes/full_drone).
 DRONE_UDP_PORT = 33335
 
-# Target spawn pose (lat, lon, alt + orientation in degrees).
-_START = dict(
-    start_lat=32.20647, start_lon=35.29034, start_alt=540.0,
-    start_roll_d=0.0, start_pitch_d=0.0, start_yaw_d=0.0,
-)
+# Where the camera itself sits and which way it faces.  ptz_sim uses this to
+# place the camera, so it is the single source of truth for the scene geography.
+CAMERA = {
+    "lat": 32.20647,
+    "lon": 35.29034,
+    "alt": 540.0,
+    "yaw_deg": 90.0,
+}
 
-# Base time unit (seconds) used to pace the canned moves.
-TIME_FOR_FIFTY = 2.0
-
-
-def _make_bot() -> UdpBot:
-    """Create + start a target drone bot at the scene spawn pose."""
-    bot = UdpBot(udp_port=DRONE_UDP_PORT, send_rate_hz=30.0, **_START)
-    bot.run(blocking=False)
-    return bot
-
-
-def _drone_to_start(bot: UdpBot) -> None:
-    """Common opening move shared by the scenes (positions the target)."""
-    bot.move_right_left(distance_m=200.0, duration_s=TIME_FOR_FIFTY)
-    bot.move_forward_backward(distance_m=50.0, duration_s=TIME_FOR_FIFTY)
-    bot.move_up_down(distance_m=50.0, duration_s=TIME_FOR_FIFTY)
+# Where the drone appears, measured FROM THE CAMERA and relative to where it is
+# looking.  It must not be (0, 0, 0): the drone would spawn inside the lens and
+# the video would go black.
+#
+#   forward – metres away from the camera        right – metres to its right
+#   up      – metres above it
+SPAWN_OFFSET = {
+    "forward": 200.0,
+    "right": 0.0,
+    "up": 40.0,
+}
 
 
-def scene_1(bot: UdpBot) -> None:
-    """Target repositions, then makes a long straight run away from the camera."""
-    _drone_to_start(bot)
-    bot.move_forward_backward(distance_m=-400.0, duration_s=TIME_FOR_FIFTY * 4)
+# ═══════════════════════════════════════════════════════════════════════════
+#  THE SCENES — edit freely
+# ═══════════════════════════════════════════════════════════════════════════
 
-
-def scene_2(bot: UdpBot) -> None:
-    """Target repositions, advances, then descends toward a fixed point."""
-    _drone_to_start(bot)
-    bot.move_forward_backward(distance_m=-150.0, duration_s=TIME_FOR_FIFTY)
-    bot.move_to_point(
-        target_lat=32.20647, target_lon=35.29034, target_alt=530.0,
-        target_yaw_d=0.0, target_roll_d=0.0, target_pitch_d=0.0,
-        duration_s=TIME_FOR_FIFTY * 4,
-    )
-
-
-# Scene registry — map config `sim.scene` numbers to scene functions.
 SCENES = {
-    1: scene_1,
-    2: scene_2,
+    1: {
+        "name": "reposition then long run away",
+        "steps": [
+            {"move": "right",    "meters": 200, "seconds": 2},
+            {"move": "forward",  "meters": 50,  "seconds": 2},
+            {"move": "up",       "meters": 50,  "seconds": 2},
+            {"move": "backward", "meters": 400, "seconds": 8},
+        ],
+    },
+
+    2: {
+        "name": "reposition, advance, then descend to a fixed point",
+        "steps": [
+            {"move": "right",    "meters": 200, "seconds": 2},
+            {"move": "forward",  "meters": 50,  "seconds": 2},
+            {"move": "up",       "meters": 50,  "seconds": 2},
+            {"move": "backward", "meters": 150, "seconds": 2},
+            {"move": "goto",     "lat": 32.20647, "lon": 35.29034,
+             "alt": 530.0, "seconds": 8},
+        ],
+    },
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Below here is machinery — you do not need to touch it to add a scene.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Camera-relative unit vectors: (forward, right, up) multipliers per move name.
+MOVE_AXES = {
+    "forward":  (1.0, 0.0, 0.0),
+    "backward": (-1.0, 0.0, 0.0),
+    "right":    (0.0, 1.0, 0.0),
+    "left":     (0.0, -1.0, 0.0),
+    "up":       (0.0, 0.0, 1.0),
+    "down":     (0.0, 0.0, -1.0),
 }
 
 
 def available_scenes():
-    """Return the sorted list of registered scene numbers."""
+    """Sorted list of scene numbers that are defined."""
     return sorted(SCENES)
 
 
-def run_scene(scene_num: int) -> bool:
-    """Play ``scene_num`` (blocking until the trajectory completes).
+def scene_name(n):
+    """Human-readable name for a scene number, or None if it isn't defined."""
+    scene = SCENES.get(n)
+    return scene["name"] if scene else None
 
-    Creates and tears down the target bot. Returns True if a scene ran, False if
-    the number isn't registered.
+
+def validate():
+    """Check every scene for obvious mistakes; returns a list of problems."""
+    problems = []
+    for num, scene in SCENES.items():
+        if not isinstance(num, int) or not 1 <= num <= 9:
+            problems.append(f"scene key {num!r} must be a whole number 1-9")
+        if "steps" not in scene or not scene["steps"]:
+            problems.append(f"scene {num} has no steps")
+            continue
+        for i, step in enumerate(scene["steps"], 1):
+            move = step.get("move")
+            if move in MOVE_AXES:
+                if "meters" not in step or "seconds" not in step:
+                    problems.append(
+                        f"scene {num} step {i} ({move}) needs 'meters' and 'seconds'")
+            elif move == "wait":
+                if "seconds" not in step:
+                    problems.append(f"scene {num} step {i} (wait) needs 'seconds'")
+            elif move == "goto":
+                for k in ("lat", "lon", "alt", "seconds"):
+                    if k not in step:
+                        problems.append(f"scene {num} step {i} (goto) needs '{k}'")
+            else:
+                problems.append(
+                    f"scene {num} step {i}: unknown move {move!r} — "
+                    f"use one of {sorted(MOVE_AXES)} or 'wait'/'goto'")
+    return problems
+
+
+# ── Legacy helper, kept for the stand-alone debug tools in ptz/ ──────────────
+def run_scene(scene_num):
+    """Play a scene with a throw-away drone (blocking).
+
+    Used by ptz/jetson_test_ptz_sim.py and ptz/ptz_tui.py.  The live system uses
+    SimDrone.play_scene() instead, which reuses one long-lived drone.
     """
-    fn = SCENES.get(scene_num)
-    if fn is None:
+    from drone import SimDrone   # local import: avoids a cycle at module load
+
+    if scene_num not in SCENES:
         print(f"[Scenes] scene {scene_num} not found; available: {available_scenes()}")
         return False
-
-    print(f"[Scenes] running scene {scene_num}")
-    bot = _make_bot()
+    drone = SimDrone()
     try:
-        fn(bot)
+        drone.start()
+        drone.play_scene(scene_num, blocking=True)
     finally:
-        bot.close()
-    print(f"[Scenes] scene {scene_num} finished")
+        drone.close()
     return True
