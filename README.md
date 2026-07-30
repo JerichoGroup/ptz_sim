@@ -355,7 +355,7 @@ tail -f /tmp/ptz_sim_zoom.log
 | `zoom=0.42 mag=2.1x FL=… HFoV=…` | Working — zoom is being applied. |
 | `WARNING: no messages on /isaac_core/zoom yet` | The node is alive but nothing is publishing. Is `ptz_sim.py` running? Did the Jetson send a zoom? |
 | `FATAL: camera prim not found` | `CAMERA_PRIM_PATH` in `zoom_node.py` doesn't match the loaded camera USD. |
-| nothing at all | The script node never ran. **Most likely cause:** Kit's script-node opt-in. `omni.graph.scriptnode` disables every script node on the stage unless `/app/omni.graph.scriptnode/opt_in` is set — `sim_app._configure_settings()` now sets it. The rest of the graph keeps running, so the camera still moves and video still streams while zoom is silently dead. Otherwise check that `scriptPath` was rewritten by `sim_app._update_script_node_paths()` and that the prim path there matches the USD. |
+| nothing at all | The module body crashed, so `setup`/`compute` were never extracted. **Almost always cause:** something at MODULE LEVEL called a function defined in the same file — see the warning block at the top of `zoom_node.py`. `omni.graph.scriptnode` only patches the script's names into `setup`/`compute`/`cleanup` globals *after* the module body has run, so such a call raises `NameError`, the exec aborts, and the node does nothing at all — with no log, because the logging call is what died. |
 
 Note the host also prints `[Host] Zoom target → raw …` when a zoom command arrives, so you can
 tell a missing command apart from a command that arrived and wasn't applied.

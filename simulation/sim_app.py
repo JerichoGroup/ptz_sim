@@ -311,12 +311,32 @@ class Simulation:
         for prim_path in script_nodes_map.keys():
 
             if not is_prim_valid(prim_path):
+                carb.log_warn(f"Script node prim not found, skipping: {prim_path}")
                 continue
 
             abs_script_path = script_nodes_map[prim_path]
 
             prim = get_prim_at_path(prim_path)
             prim.GetAttribute("inputs:scriptPath").Set(abs_script_path)
+
+            # Force the node to re-read and re-execute the file on every launch.
+            # omni.graph.scriptnode compiles the script only when
+            # `state:omni_initialized` is False; once it flips True the node keeps
+            # using the compiled code it holds in PROCESS-LOCAL memory.  If that
+            # flag is ever carried over (saved stage, instanced graph, reused
+            # session) the node silently stops running the script while the rest
+            # of the graph keeps ticking — which looks exactly like "the feature
+            # worked once and then never again".
+            init_attr = prim.GetAttribute("state:omni_initialized")
+            if init_attr:
+                init_attr.Set(False)
+
+            # usePath must be on, or the node executes the inline `inputs:script`
+            # stub (which does nothing) instead of our file.
+            use_path_attr = prim.GetAttribute("inputs:usePath")
+            if use_path_attr:
+                use_path_attr.Set(True)
+
             carb.log_info(f"Updated {prim_path} script path → {abs_script_path}")
 
 
