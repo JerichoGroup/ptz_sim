@@ -8,7 +8,7 @@
             }
             dictionary Perspective = {
                 double3 position = (-7.803255792548676, 47.7270341428675, 46.77841396995624)
-                double3 target = (-5.705076478959352, 36.53270010888744, 35.94683625197579)
+                double3 target = (-5.7050762132505835, 36.532698691261984, 35.94683776854892)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -137,7 +137,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/telem293005_1_075/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/telem293005_1_075/tileset.json"
         float3[] extent = [(16224.691, 94121.93, -1593.8441), (24527.625, 104044.13, -157.4398)]
         token visibility = "inherited"
     }
@@ -149,7 +149,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/telem293005_2_095/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/telem293005_2_095/tileset.json"
         float3[] extent = [(26212.277, 115199.75, -2208.4358), (28498.61, 121011.914, 193.53667)]
         token visibility = "inherited"
     }
@@ -161,7 +161,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/telem_15052024/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/telem_15052024/tileset.json"
         float3[] extent = [(24129.043, 112383.38, -3389.0857), (36630.375, 123872.09, 213.48553)]
         token visibility = "inherited"
     }
@@ -173,7 +173,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/telem_18042024/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/telem_18042024/tileset.json"
         float3[] extent = [(12726.513, 91944.81, -1001.3225), (21776.924, 102955.02, -307.58746)]
         token visibility = "inherited"
     }
@@ -185,7 +185,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/telem_20240516_074212/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/telem_20240516_074212/tileset.json"
         float3[] extent = [(19870.104, 107449.68, -1506.0347), (27907.404, 113332.96, -202.1126)]
         token visibility = "inherited"
     }
@@ -197,7 +197,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/telem_24042024/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/telem_24042024/tileset.json"
         float3[] extent = [(21579.82, 109802.81, -1423.9512), (30133.053, 118961.97, -589.98193)]
         token visibility = "inherited"
     }
@@ -209,7 +209,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/Tulkarem_11_22/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/Tulkarem_11_22/tileset.json"
         float3[] extent = [(-23706.975, 2277.349, -533.15125), (-6132.8315, 19534.115, 26.139288)]
         token visibility = "inherited"
     }
@@ -221,7 +221,7 @@ def Xform "tilesets"
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/telem_250424/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/telem_250424/tileset.json"
         float3[] extent = [(18681.709, 101595.21, -2161.1357), (28805.775, 110692.98, 180.50586)]
         token visibility = "inherited"
     }
@@ -238,7 +238,7 @@ def Xform "tilesets"
         uint64 cesium:maximumCachedBytes = 8589934592
         float cesium:maximumScreenSpaceError = 8
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://10.20.15.122:8088/nablus/tileset.json"
+        string cesium:url = "http://192.168.30.71:8088/nablus/tileset.json"
         float3[] extent = [(-7982.7725, -5877.865, -751.89636), (8347.764, 3756.5452, 699.53015)]
     }
 }
@@ -278,8 +278,8 @@ def Xform "bboxes" (
         double cesium:anchor:latitude = 32.22480999999999
         double cesium:anchor:longitude = 35.25621
         double3 cesium:anchor:position = (4410542.061819228, 3117779.8066218565, 3381821.901378448)
-        double3 xformOp:rotateXYZ = (-3.1805546814635124e-15, -5.936028145530076e-15, 1.2597756434493676e-14)
-        double3 xformOp:scale = (1, 1.0000000000000013, 1.0000000000000022)
+        double3 xformOp:rotateXYZ = (-3.180554681463511e-15, -3.3920160831600468e-15, 5.381258144588668e-15)
+        double3 xformOp:scale = (1.0000000000000002, 1.0000000000000018, 1.0000000000000029)
         double3 xformOp:translate = (-4.656612873077393e-10, 0, 1.862645149230957e-9)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 

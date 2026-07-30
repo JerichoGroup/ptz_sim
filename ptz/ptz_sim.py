@@ -56,6 +56,7 @@ class PTZSim:
         usd_path="./usd/maps/earth/earth.usda",
         show_isaac_logs=False,
         image_rtp=False,
+        bbox_publisher=False,
         cmd_ttl=0.15,   # seconds before a coalesced move command goes stale
         scene_start_delay_s=20.0,  # wait this long after Isaac loads before playing the scene
     ):
@@ -136,6 +137,7 @@ class PTZSim:
             com_udp=True,
             show_isaac_logs=show_isaac_logs,
             image_rtp=image_rtp,
+            bbox_publisher=bbox_publisher,
         )
 
     # ------------------------------------------------------------------
@@ -618,6 +620,7 @@ if __name__ == "__main__":
         usd_path=USD_PATH,
         show_isaac_logs=False,
         image_rtp=True,
+        bbox_publisher=True,
         scene_start_delay_s=SCENE_START_DELAY_S,
     )
     sim.run()
