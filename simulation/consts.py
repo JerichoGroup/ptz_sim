@@ -18,7 +18,7 @@ CAMERA_FPS = 20.0                 # Netz-250 native stream rate
 
 
 # ========================== Cesium consts ============================ #
-TILESETS_HTTP_SERVER_URL = "http://192.168.30.71:8088"
+TILESETS_HTTP_SERVER_URL = "http://192.168.30.105:8088"
 
 
 # ===================== Distance sensor consts ======================== #

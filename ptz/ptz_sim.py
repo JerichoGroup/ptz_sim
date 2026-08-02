@@ -648,9 +648,13 @@ class PTZSim:
                 self._drone_tlm = {
                     "fwd": fwd, "right": right, "up": up,
                     "range": math.sqrt(east * east + north * north + up * up),
-                    "in_frame": bool(b.in_frame),
-                    "visible": bool(b.is_visible),
                 }
+            # NOTE: bbox_node also reports in_frame / is_visible, but Isaac's
+            # 2D-bbox visibility is unreliable for this target — it reports "not
+            # in frame" even when the drone is plainly centred in the video. The
+            # flags are therefore deliberately NOT forwarded; a readout that is
+            # always wrong is worse than none. The distances above come from
+            # world poses and are trustworthy.
             self._drone_tlm_n += 1
             return
 
