@@ -165,6 +165,19 @@ class PTZSim:
         else:
             print("[Host] Jetson pose target: reply-to-sender (source of received commands)")
 
+        # Scenes are meant to be editable by a non-developer, so check them at
+        # startup and say so plainly.  scenes.validate() existed for exactly this
+        # but nothing called it, which meant a typo in SCENES failed silently at
+        # keypress time instead of being reported here.
+        problems = scenes.validate()
+        if problems:
+            print(f"[Host] WARNING: {len(problems)} problem(s) in ptz/scenes.py — "
+                  f"those scenes will not fly correctly:")
+            for problem in problems:
+                print(f"[Host]   {problem}")
+        else:
+            print(f"[Host] scenes OK: {scenes.available_scenes()}")
+
         self._isaac_ctx = HostIsaacManager(
             core_path=core_path,
             usd_path=usd_path,
@@ -199,7 +212,7 @@ class PTZSim:
                 # every boot.
                 print(f"[Host] target drone on demand — press 1-"
                       f"{max(scenes.available_scenes())} for a scene, "
-                      f"0 for manual numpad flight")
+                      f"0 for manual flight (then i/k j/l u/o)")
                 while self._run:
                     time.sleep(1.0)
             except KeyboardInterrupt:
@@ -729,7 +742,7 @@ if __name__ == "__main__":
     JETSON_IP = os.environ.get("PTZ_JETSON_IP")            # None → reply-to-sender
     JETSON_PORT = int(os.environ.get("PTZ_JETSON_PORT", "5006"))
 
-    # Target-drone speed at full stick during manual (numpad) flight, m/s.
+    # Target-drone speed while a manual-flight key is held, m/s.
     DRONE_SPEED_MS = float(os.environ.get("PTZ_DRONE_SPEED_MS", "10.0"))
 
     sim = PTZSim(

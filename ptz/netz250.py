@@ -102,7 +102,13 @@ def shift_per_pan(zoom_norm: float) -> float:
 
 
 def shift_per_tilt(zoom_norm: float) -> float:
-    """Measured fraction-of-frame the scene shifts per ONVIF tilt unit."""
+    """Measured fraction-of-frame the scene shifts per ONVIF tilt unit.
+
+    REFERENCE DATA, not currently in the render path: Isaac derives the vertical
+    FoV from the horizontal one plus the resolution aspect ratio, so only
+    shift_per_pan feeds hfov_deg().  Kept because TILT_SHIFT_CURVE is measured off
+    the real camera and cannot be regenerated without hardware access.
+    """
     return _interp(TILT_SHIFT_CURVE, zoom_norm)
 
 
@@ -144,16 +150,6 @@ def focal_length_mm(zoom_norm: float) -> float:
     """Focal length that renders ``hfov_deg(zoom_norm)`` for this sensor."""
     hfov = math.radians(hfov_deg(zoom_norm))
     return SENSOR_WIDTH_MM / (2.0 * math.tan(hfov / 2.0))
-
-
-def horizontal_aperture_mm() -> float:
-    """Sensor width — Isaac's 'horizontalAperture'."""
-    return SENSOR_WIDTH_MM
-
-
-def vertical_aperture_mm() -> float:
-    """Sensor height — Isaac's 'verticalAperture'."""
-    return SENSOR_HEIGHT_MM
 
 
 def normalize_zoom(raw: float) -> float:

@@ -16,7 +16,7 @@ Every move is one line:
   "meters"  – how far to travel
   "seconds" – how long the move should take (so 100 m in 4 s = 25 m/s)
 
-Directions are **relative to the camera**, exactly like the numpad joystick:
+Directions are **relative to the camera**, exactly like the manual flight keys:
 
     forward    away from the camera        backward   toward the camera
     right      to the camera's right       left       to the camera's left
@@ -113,27 +113,40 @@ def available_scenes():
     return sorted(SCENES)
 
 
-def scene_name(n):
-    """Human-readable name for a scene number, or None if it isn't defined."""
-    scene = SCENES.get(n)
-    return scene["name"] if scene else None
-
-
 def validate():
-    """Check every scene for obvious mistakes; returns a list of problems."""
+    """Check every scene for obvious mistakes; returns a list of problems.
+
+    This is the safety net for editing SCENES by hand, so it must never raise —
+    a malformed entry has to come back as a readable problem, not a traceback.
+    Called at host startup (``ptz/ptz_sim.py``), which prints whatever it returns.
+    """
     problems = []
     for num, scene in SCENES.items():
         if not isinstance(num, int) or not 1 <= num <= 9:
             problems.append(f"scene key {num!r} must be a whole number 1-9")
+        if not isinstance(scene, dict):
+            problems.append(f"scene {num} must be a block with 'name' and 'steps'")
+            continue
         if "steps" not in scene or not scene["steps"]:
             problems.append(f"scene {num} has no steps")
             continue
         for i, step in enumerate(scene["steps"], 1):
+            if not isinstance(step, dict):
+                problems.append(
+                    f"scene {num} step {i} is {type(step).__name__}, not a block — "
+                    f"each step looks like {{'move': 'forward', 'meters': 100, "
+                    f"'seconds': 10}}")
+                continue
             move = step.get("move")
             if move in MOVE_AXES:
-                if "meters" not in step or "seconds" not in step:
-                    problems.append(
-                        f"scene {num} step {i} ({move}) needs 'meters' and 'seconds'")
+                for k in ("meters", "seconds"):
+                    if k not in step:
+                        problems.append(
+                            f"scene {num} step {i} ({move}) needs '{k}'")
+                    elif not isinstance(step[k], (int, float)):
+                        problems.append(
+                            f"scene {num} step {i} ({move}): '{k}' must be a "
+                            f"number, got {step[k]!r}")
             elif move == "wait":
                 if "seconds" not in step:
                     problems.append(f"scene {num} step {i} (wait) needs 'seconds'")
@@ -146,24 +159,3 @@ def validate():
                     f"scene {num} step {i}: unknown move {move!r} — "
                     f"use one of {sorted(MOVE_AXES)} or 'wait'/'goto'")
     return problems
-
-
-# ── Legacy helper, kept for the stand-alone debug tools in ptz/ ──────────────
-def run_scene(scene_num):
-    """Play a scene with a throw-away drone (blocking).
-
-    Used by ptz/jetson_test_ptz_sim.py and ptz/ptz_tui.py.  The live system uses
-    SimDrone.play_scene() instead, which reuses one long-lived drone.
-    """
-    from drone import SimDrone   # local import: avoids a cycle at module load
-
-    if scene_num not in SCENES:
-        print(f"[Scenes] scene {scene_num} not found; available: {available_scenes()}")
-        return False
-    drone = SimDrone()
-    try:
-        drone.start()
-        drone.play_scene(scene_num, blocking=True)
-    finally:
-        drone.close()
-    return True

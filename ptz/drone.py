@@ -1,7 +1,7 @@
 """SimDrone — the simulated target drone inside Isaac Sim.
 
 One long-lived drone that can either fly a canned scene or be flown manually
-from the DroneTracker window's numpad.  Wraps ``UdpBot`` from the dev kit, which
+from the DroneTracker window's flight keys (i/k, j/l, u/o).  Wraps ``UdpBot`` from the dev kit, which
 streams pose packets to Isaac on UDP 33335 (driving ``/bboxes/full_drone``).
 
 Everything is expressed **relative to the camera**, because that is the only
@@ -73,7 +73,7 @@ CAMERA_AZIMUTH_PER_PAN_DEG = 180.0
 
 
 class SimDrone:
-    """The simulated target drone: canned scenes + manual numpad flight."""
+    """The simulated target drone: canned scenes + manual keyboard flight."""
 
     def __init__(self, pan_getter=None, speed_ms=DEFAULT_SPEED_MS,
                  udp_port=scenes.DRONE_UDP_PORT, send_rate_hz=30.0):
@@ -190,7 +190,7 @@ class SimDrone:
         d_lat, d_lon = meters_to_latlon_offset(north, east, cam["lat"])
         return (cam["lat"] + d_lat, cam["lon"] + d_lon, cam["alt"] + off["up"])
 
-    # ── manual flight (numpad) ───────────────────────────────────────────────
+    # ── manual flight (i/k, j/l, u/o) ───────────────────────────────────────
 
     def set_velocity(self, forward, right, up):
         """Set the manual-flight velocity, each component in -1..+1.
