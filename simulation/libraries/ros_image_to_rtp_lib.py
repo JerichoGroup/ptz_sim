@@ -17,6 +17,7 @@ NOTE: binding port 554 requires root or CAP_NET_BIND_SERVICE on Linux.
 
 import math
 import os
+import sys
 import random
 import threading
 import time
@@ -63,6 +64,21 @@ _GIFS_DIR = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "gifs"))
 
 
+# The camera model, for zoom-dependent sprite sizing.  Imported rather than
+# copied: netz250.py is the single source of truth for this lens and needs only
+# math + numpy.  If it cannot be found we fall back to a linear zoom ramp.
+_PTZ_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "ptz"))
+try:
+    if _PTZ_DIR not in sys.path:
+        sys.path.insert(0, _PTZ_DIR)
+    import netz250 as _cam_model
+except Exception as _e:                                   # pragma: no cover
+    _cam_model = None
+    print(f"[FrameEffects] camera model unavailable ({_e}); "
+          f"zoom-dependent sprite size will ramp linearly")
+
+
 def _pics(*names):
     return [os.path.join(_PICS_DIR, n) for n in names]
 
@@ -96,8 +112,26 @@ class SpriteKind:
     gap_max:   int   = 160
     alpha:     float = 0.9                # 0..1 opacity multiplier
     jitter:    float = 0.6                # per-frame velocity wander
-    anim_hold: int   = 3                  # rendered frames each GIF frame is shown
+    # Rendered frames each GIF frame is shown.  Float: advancing is accumulated,
+    # so 1.5 really does play at 2x the speed of 3 rather than rounding to 2.
+    anim_hold: float = 3.0
     gray:      int   = 25                 # fallback square shade if images missing
+    # ---- zoom-dependent size ----
+    # size_min/size_max above are the sizes at FULL WIDE.  These are the sizes at
+    # FULL TELE; None on either disables zoom dependence entirely (what flies use,
+    # since a fly is on the lens, not out in the world).  In between, size follows
+    # the lens's TRUE magnification curve rather than the zoom slider, because a
+    # real object's pixel size scales with magnification (= 1/HFoV), which is
+    # markedly non-linear on this camera: 3x at zoom 0.5, 9x at 1.0.
+    size_min_tele: int = None
+    size_max_tele: int = None
+    # ---- path completion ----
+    # must_exit: ignore `life` and keep the sprite until it leaves the frame, so a
+    # bird never blinks out mid-air.  To guarantee it *can* leave, its heading is
+    # fixed at spawn and only wobbles within +/- `wobble` radians, which keeps
+    # progress along that heading strictly positive.
+    must_exit: bool  = False
+    wobble:    float = 0.30               # rad, max deviation from base heading
     # Vertical spawn bias.  `top_frac` marks the boundary between the "sky" band
     # (top of frame) and the "ground" band below it; `top_weight` is the
     # probability a new sprite spawns in the sky band.  Birds sitting on the
@@ -125,9 +159,16 @@ def _default_kinds():
             name="bird",
             images=_gifs("bird1.gif", "bird2.gif", "bird3.gif", "bird4.gif", "bird5.gif"),
             count=1, size_min=10, size_max=28,
+            # At full tele a bird fills roughly an eighth of the frame width
+            # (1920/8 = 240 px, the midpoint of this range).
+            size_min_tele=140, size_max_tele=340,
             speed_min=2.0, speed_max=12.0,
             life_min=70, life_max=240, gap_min=90, gap_max=260,
-            alpha=0.92, jitter=0.35, anim_hold=3,
+            alpha=0.92, jitter=0.35,
+            # 2x the original flap rate: 3.0 -> 1.5 rendered frames per GIF frame,
+            # i.e. 13.3 GIF-frames/s at 20 fps (was 6.7).
+            anim_hold=1.5,
+            must_exit=True,
             top_frac=2.0 / 3.0, top_weight=0.85),
     ]
 
@@ -169,6 +210,7 @@ class FrameEffects:
         self.enabled = _CV_OK
         # blur state
         self._zoom_last_val = None
+        self._zoom_norm = 0.0         # normalised [0,1]; drives sprite size
         self._blur_t0 = None          # monotonic start of the current blur envelope
         self._zoom_last_t = 0.0       # monotonic time of the last zoom change
         # noise state — one entry per kind:
@@ -180,6 +222,10 @@ class FrameEffects:
 
     # ---- zoom signal → arms the blur envelope ----
     def notify_zoom(self, value: float) -> None:
+        # Record the zoom FIRST and always: sprite sizing needs it even when the
+        # refocus blur is switched off.  The topic carries NORMALISED zoom [0,1]
+        # (ptz_sim publishes netz250.normalize_zoom of the raw value).
+        self._zoom_norm = max(0.0, min(1.0, float(value)))
         if not (self.enabled and self.cfg.blur_enabled):
             return
         if self._zoom_last_val is None:
@@ -265,6 +311,74 @@ class FrameEffects:
         print("[FrameEffects] sprites: " + ", ".join(
             f"{ks['cfg'].name}×{len(ks['bases'])}" for ks in self._kind_states))
 
+    # ---- zoom-dependent sizing ----
+    def _zoom_growth(self) -> float:
+        """0.0 at full wide, 1.0 at full tele, following the LENS.
+
+        A real object's pixel size scales with optical magnification (= 1/HFoV),
+        not with the zoom slider, and on this camera the two are very different:
+        the slider's midpoint is only 3x magnification out of 9x.  Interpolating
+        on magnification therefore makes a bird grow the way it actually would.
+        Falls back to the slider if the camera model could not be imported.
+        """
+        z = self._zoom_norm
+        if _cam_model is None:
+            return z
+        try:
+            m0 = _cam_model.true_magnification(0.0)
+            m1 = _cam_model.true_magnification(1.0)
+            if m1 <= m0:
+                return z
+            return (_cam_model.true_magnification(z) - m0) / (m1 - m0)
+        except Exception:
+            return z
+
+    def _size_for(self, k, unit: float) -> int:
+        """Longer-side pixel size for kind `k` at the current zoom.
+
+        `unit` is the sprite's fixed 0..1 position inside the size range, chosen
+        once at spawn, so a given bird keeps its relative size as the zoom moves.
+        """
+        lo, hi = float(k.size_min), float(k.size_max)
+        if k.size_min_tele is not None and k.size_max_tele is not None:
+            t = self._zoom_growth()
+            lo += (float(k.size_min_tele) - lo) * t
+            hi += (float(k.size_max_tele) - hi) * t
+        return max(1, int(round(lo + (hi - lo) * unit)))
+
+    def _speed_scale(self, k, p) -> float:
+        """Pixel-speed multiplier for the current zoom (1.0 if not zoom-scaled).
+
+        Angular velocity magnifies exactly as angular size does, so a real bird
+        at a fixed distance appears to cross the frame faster as you zoom in.
+        Deriving the multiplier from the sprite's own size growth keeps its motion
+        consistent with its body — the same body-lengths per second at any zoom —
+        which is what makes the flight read as natural rather than sped-up.
+        """
+        if k.size_min_tele is None:
+            return 1.0
+        return float(p["size"]) / float(p.get("size_wide") or 1)
+
+    def _apply_zoom_size(self, ks, p) -> None:
+        """Rescale a live sprite when the zoom has changed its target size.
+
+        Rescaling means re-running _make_anim over every GIF frame, so it is only
+        done when the target moved by at least 2 px.  The sprite is kept centred
+        on its current position so it grows in place rather than drifting.
+        """
+        k = ks["cfg"]
+        if k.size_min_tele is None or p.get("base") is None:
+            return
+        want = self._size_for(k, p["unit"])
+        if abs(want - p["size"]) < 2:
+            return
+        frames, sw, sh = self._make_anim(p["base"], want, k.alpha)
+        p["x"] += (p["sw"] - sw) * 0.5
+        p["y"] += (p["sh"] - sh) * 0.5
+        p["frames"] = frames
+        p["sw"], p["sh"], p["size"] = sw, sh, want
+        p["fidx"] %= len(frames)
+
     def _make_anim(self, base_frames, size, alpha_mul):
         """Scale every frame of an animation so its longer side == `size` (aspect
         preserved), with one random L/R flip applied to all frames so the sprite
@@ -290,21 +404,42 @@ class FrameEffects:
         k = ks["cfg"]
         speed = random.uniform(k.speed_min, k.speed_max)
         ang = random.uniform(0.0, 2.0 * math.pi)
-        size = random.randint(k.size_min, k.size_max)
-        if ks["bases"]:
-            frames, sw, sh = self._make_anim(random.choice(ks["bases"]), size, k.alpha)
+        if k.size_min_tele is not None and k.size_max_tele is not None:
+            # Zoom-scaled kind (birds): remember a fixed 0..1 position inside the
+            # size range so this sprite keeps its relative size for life while its
+            # pixel size tracks the zoom.
+            unit = random.random()
+            size = self._size_for(k, unit)
+        else:
+            # Not zoom-scaled (flies): the original uniform integer draw, kept
+            # exactly as it was — a fly rides on the lens, so nothing about it
+            # should change with zoom.
+            unit = 0.0
+            size = random.randint(k.size_min, k.size_max)
+        base = random.choice(ks["bases"]) if ks["bases"] else None
+        if base is not None:
+            frames, sw, sh = self._make_anim(base, size, k.alpha)
         else:
             frames = None
             sw = sh = size
         return {
             "x": random.uniform(0, w), "y": self._spawn_y(k, h),
             "vx": speed * math.cos(ang), "vy": speed * math.sin(ang),
+            # Base heading + speed, kept so a must_exit sprite can wobble around a
+            # constant direction instead of random-walking and never leaving.
+            "hx": math.cos(ang), "hy": math.sin(ang), "speed": speed, "wob": 0.0,
             "sw": sw, "sh": sh, "gray": k.gray,
+            "base": base, "unit": unit, "size": size,
+            # Size this sprite would have at full wide.  Pixel speed is scaled by
+            # size/size_wide so the sprite covers the same number of body-lengths
+            # per second at any zoom — see _speed_scale().
+            "size_wide": max(1, int(round(
+                k.size_min + (k.size_max - k.size_min) * unit))),
             "life": random.randint(k.life_min, k.life_max),
             "wait": 0,
             "frames": frames,                       # list of (color, alpha) or None
             "fidx": 0,                              # current animation frame
-            "fhold": k.anim_hold,                   # ticks left on the current frame
+            "ticks": 0,                             # rendered frames since spawn
         }
 
     @staticmethod
@@ -348,29 +483,51 @@ class FrameEffects:
                     if p["wait"] == 0:
                         p.update(self._spawn(ks, w, h))
                     continue
-                # drift with a small velocity wander for organic motion
-                p["vx"] += random.uniform(-k.jitter, k.jitter)
-                p["vy"] += random.uniform(-k.jitter, k.jitter)
-                sp = math.hypot(p["vx"], p["vy"]) or 1.0
-                if sp > hi:
-                    p["vx"] *= hi / sp; p["vy"] *= hi / sp
-                elif sp < lo:
-                    p["vx"] *= lo / sp; p["vy"] *= lo / sp
+                if k.must_exit:
+                    # Wobble around the FIXED spawn heading.  Because the wobble is
+                    # clamped well inside +/-90 deg, travel along that heading stays
+                    # positive every frame, so the sprite always reaches an edge —
+                    # it can never hover mid-frame forever (the reason a free random
+                    # walk is unsafe once `life` no longer forces a despawn).
+                    p["wob"] += random.uniform(-k.jitter, k.jitter) * 0.1
+                    p["wob"] = max(-k.wobble, min(k.wobble, p["wob"]))
+                    ca, sa = math.cos(p["wob"]), math.sin(p["wob"])
+                    sp_z = p["speed"] * self._speed_scale(k, p)
+                    p["vx"] = sp_z * (p["hx"] * ca - p["hy"] * sa)
+                    p["vy"] = sp_z * (p["hx"] * sa + p["hy"] * ca)
+                else:
+                    # drift with a small velocity wander for organic motion
+                    p["vx"] += random.uniform(-k.jitter, k.jitter)
+                    p["vy"] += random.uniform(-k.jitter, k.jitter)
+                    sp = math.hypot(p["vx"], p["vy"]) or 1.0
+                    if sp > hi:
+                        p["vx"] *= hi / sp; p["vy"] *= hi / sp
+                    elif sp < lo:
+                        p["vx"] *= lo / sp; p["vy"] *= lo / sp
                 p["x"] += p["vx"]; p["y"] += p["vy"]; p["life"] -= 1
+                # Track the zoom: a bird already in shot grows/shrinks with it.
+                self._apply_zoom_size(ks, p)
                 # when it ages out or drifts off-frame, go idle for a random gap
                 sw, sh = p["sw"], p["sh"]
                 m = max(sw, sh) + 2
-                if (p["life"] <= 0 or p["x"] < -m or p["x"] > w + m
-                        or p["y"] < -m or p["y"] > h + m):
+                off = (p["x"] < -m or p["x"] > w + m
+                       or p["y"] < -m or p["y"] > h + m)
+                # must_exit sprites live until they leave the frame — `life` is
+                # ignored, so they never blink out mid-air.
+                if off or (not k.must_exit and p["life"] <= 0):
                     p["wait"] = random.randint(k.gap_min, k.gap_max)
                     continue
                 # advance the wing-flap animation (no-op for 1-frame sprites)
                 frames = p["frames"]
                 if frames is not None and len(frames) > 1:
-                    p["fhold"] -= 1
-                    if p["fhold"] <= 0:
-                        p["fidx"] = (p["fidx"] + 1) % len(frames)
-                        p["fhold"] = k.anim_hold
+                    # Derive the GIF frame from a tick count rather than
+                    # accumulating a fractional step.  This makes non-integer
+                    # anim_hold exact (1.5 really is twice the rate of 3.0) with no
+                    # floating-point drift — an accumulator lost one advance per
+                    # ~200 frames, and an integer countdown could only express
+                    # 1, 2, 3 ... rendered frames per GIF frame.
+                    p["ticks"] += 1
+                    p["fidx"] = int(p["ticks"] / max(1e-6, float(k.anim_hold))) % len(frames)
                 # visible rect on the frame, and matching sub-rect of the sprite
                 px = int(p["x"]); py = int(p["y"])
                 x0 = max(0, px); y0 = max(0, py)
@@ -403,12 +560,23 @@ class FrameEffects:
             if len(raw) != w * h * c:
                 return raw                   # padded/odd layout — don't risk corruption
             arr = np.frombuffer(raw, np.uint8).reshape(h, w, c)
-            frame = cv2.GaussianBlur(arr, (0, 0), sigma) if do_blur else arr.copy()
+            # ORDER MATTERS: sprites go on FIRST, blur second.
+            #
+            # The refocus blur has to be the last thing applied so it blurs the
+            # birds along with the scene.  That is not cosmetic: bird size is
+            # rescaled as the zoom moves, and the blur is armed by exactly the same
+            # zoom change, so the blur lands on top of the resize and hides the
+            # step.  Blurring first (the previous order) left the sprites
+            # pin-sharp over an out-of-focus scene, which both looked wrong and
+            # made every size change obvious.
+            frame = arr.copy()
             if do_noise:
                 order = "rgb" if encoding in ("rgb8", "rgba8") else "bgr"
                 self._load_sprites(order)
                 self._ensure_particles(w, h)
                 self._draw_noise(frame, w, h, c)
+            if do_blur:
+                frame = cv2.GaussianBlur(frame, (0, 0), sigma)
             return frame.tobytes()
         except Exception as e:
             print(f"[FrameEffects] process failed, passing frame through: {e}")
