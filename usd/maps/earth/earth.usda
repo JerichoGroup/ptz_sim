@@ -130,7 +130,12 @@ def Xform "tilesets"
     double3 xformOp:translate = (0, 0, 0)
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-    def CesiumTilesetPrim "telem293005_1_075"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "telem293005_1_075" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -142,7 +147,12 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    def CesiumTilesetPrim "telem293005_2_095"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "telem293005_2_095" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -154,7 +164,12 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    def CesiumTilesetPrim "telem_15052024"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "telem_15052024" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -166,7 +181,12 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    def CesiumTilesetPrim "telem_18042024"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "telem_18042024" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -178,7 +198,12 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    def CesiumTilesetPrim "telem_20240516_074212"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "telem_20240516_074212" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -190,7 +215,12 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    def CesiumTilesetPrim "telem_24042024"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "telem_24042024" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -202,7 +232,12 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    def CesiumTilesetPrim "Tulkarem_11_22"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "Tulkarem_11_22" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -214,7 +249,12 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    def CesiumTilesetPrim "telem_250424"
+    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
+    # never instantiates it, fetches its tileset.json, or traverses it each
+    # frame.  Set active = true to bring it back.
+    def CesiumTilesetPrim "telem_250424" (
+        active = false
+    )
     {
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
@@ -228,14 +268,14 @@ def Xform "tilesets"
 
     def CesiumTilesetPrim "nablus"
     {
-        bool cesium:enableFrustumCulling = 0
+        bool cesium:enableFrustumCulling = 1
         bool cesium:forbidHoles = 1
         rel cesium:georeferenceBinding = </NablusCesiumGeoreference>
         string cesium:ionAccessToken = ""
         int64 cesium:ionAssetId = 0
         rel cesium:ionServerBinding = None
-        uint cesium:loadingDescendantLimit = 48
-        uint64 cesium:maximumCachedBytes = 8589934592
+        uint cesium:loadingDescendantLimit = 20
+        uint64 cesium:maximumCachedBytes = 2147483648
         float cesium:maximumScreenSpaceError = 8
         uniform token cesium:sourceType = "url"
         string cesium:url = "http://192.168.30.105:8088/nablus/tileset.json"

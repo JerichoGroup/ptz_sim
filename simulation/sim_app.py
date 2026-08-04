@@ -202,7 +202,11 @@ class Simulation:
         settings.set_bool("/app/usdrt/scene_delegate/enableProxyCubes", False)
         settings.set_bool("/app/usdrt/scene_delegate/geometryStreaming/enabled", False)
         settings.set_bool("/omnihydra/parallelHydraSprimSync", False)
-        settings.set_bool("/rtx/ecoMode/enabled", True)
+        # Eco mode throttles the renderer when the scene stops changing, to save
+        # power.  That is the opposite of what this stand needs: the camera is
+        # usually static, so eco mode engages exactly when we still want a steady
+        # stream of freshly rendered frames going out over RTSP.
+        settings.set_bool("/rtx/ecoMode/enabled", False)
         settings.set_bool("/app/player/useFixedTimeStepping", True)
 
         # ── OmniGraph script nodes MUST be opted in ───────────────────────────

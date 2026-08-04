@@ -257,7 +257,15 @@ class SimDrone:
                 self._flown_m = 0.0
 
     def _nudge(self, north_m, east_m, up_m):
-        """Move the drone by a small offset, in metres, and publish immediately."""
+        """Move the drone by a small offset, in metres.
+
+        Only updates the pose; it deliberately does NOT publish.  ``UdpBot`` runs
+        its own sender loop (``run(blocking=False)``) which re-publishes whatever
+        pose is currently set at ``send_rate_hz``, so publishing here as well
+        doubled the packet rate for no benefit — and the receiver consumes one
+        packet per rendered frame, so surplus packets just queue up in the kernel
+        and push the rendered position further behind real time.
+        """
         bot = self._bot
         if bot is None:
             return
@@ -266,7 +274,6 @@ class SimDrone:
             bot._current_lat += d_lat
             bot._current_lon += d_lon
             bot._current_alt += up_m
-            bot._publish_current_pose()
         except Exception as e:
             print(f"[Drone] nudge error: {e}")
 
@@ -344,6 +351,8 @@ class SimDrone:
         bot._current_lat = lat
         bot._current_lon = lon
         bot._current_alt = alt
+        # Single packet on a teleport (not a stream), so this cannot build a
+        # backlog; it just shows the jump one frame sooner.
         bot._publish_current_pose()
 
     def _run_step(self, step, gen):
@@ -379,7 +388,12 @@ class SimDrone:
                        seconds, gen)
 
     def _glide_to(self, lat, lon, alt, seconds, gen):
-        """Interpolate smoothly to a target pose, checking for cancellation."""
+        """Interpolate smoothly to a target pose, checking for cancellation.
+
+        Sets the pose only; UdpBot's own sender loop publishes it at
+        ``send_rate_hz``.  See _nudge() for why publishing here as well is
+        actively harmful.
+        """
         bot = self._bot
         if bot is None:
             return
@@ -393,7 +407,6 @@ class SimDrone:
             bot._current_lat = lat0 + (lat - lat0) * a
             bot._current_lon = lon0 + (lon - lon0) * a
             bot._current_alt = alt0 + (alt - alt0) * a
-            bot._publish_current_pose()
             time.sleep(dt)
 
     def _sleep_cancellable(self, seconds, gen):
