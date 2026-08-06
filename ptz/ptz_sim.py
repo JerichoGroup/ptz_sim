@@ -65,6 +65,7 @@ class PTZSim:
         show_isaac_logs=False,
         image_rtp=False,
         bbox_publisher=False,
+        sat=False,
         cmd_ttl=0.15,   # seconds before a coalesced move command goes stale
         drone_speed_ms=10.0,       # target-drone speed at full stick (manual flight)
     ):
@@ -185,6 +186,7 @@ class PTZSim:
             show_isaac_logs=show_isaac_logs,
             image_rtp=image_rtp,
             bbox_publisher=bbox_publisher,
+            sat=sat,
         )
 
     # ------------------------------------------------------------------
@@ -754,6 +756,7 @@ if __name__ == "__main__":
         show_isaac_logs=False,
         image_rtp=True,
         bbox_publisher=True,
+        sat=True,
         drone_speed_ms=DRONE_SPEED_MS,
     )
     sim.run()
