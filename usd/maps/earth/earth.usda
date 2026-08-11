@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (-7.803255792548676, 47.7270341428675, 46.77841396995624)
-                double3 target = (-5.7050762132505835, 36.532698691261984, 35.94683776854892)
+                double3 position = (1.2154844403573417, 8.725496070732166, 5.7094374777676205)
+                double3 target = (0.4347759281422975, 0.9776134413765645, 0.8481725611935076)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -130,9 +130,6 @@ def Xform "tilesets"
     double3 xformOp:translate = (0, 0, 0)
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "telem293005_1_075" (
         active = false
     )
@@ -147,9 +144,6 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "telem293005_2_095" (
         active = false
     )
@@ -164,9 +158,6 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "telem_15052024" (
         active = false
     )
@@ -181,9 +172,6 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "telem_18042024" (
         active = false
     )
@@ -198,9 +186,6 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "telem_20240516_074212" (
         active = false
     )
@@ -215,9 +200,6 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "telem_24042024" (
         active = false
     )
@@ -232,9 +214,6 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "Tulkarem_11_22" (
         active = false
     )
@@ -249,9 +228,6 @@ def Xform "tilesets"
         token visibility = "inherited"
     }
 
-    # Unused: only the "nablus" tileset is needed.  Deactivated so Cesium
-    # never instantiates it, fetches its tileset.json, or traverses it each
-    # frame.  Set active = true to bring it back.
     def CesiumTilesetPrim "telem_250424" (
         active = false
     )
@@ -314,13 +290,13 @@ def Xform "bboxes" (
     )
     {
         prepend rel cesium:anchor:georeferenceBinding = </NablusCesiumGeoreference>
-        double cesium:anchor:height = 516.6999999996224
-        double cesium:anchor:latitude = 32.22480999999999
-        double cesium:anchor:longitude = 35.25621
-        double3 cesium:anchor:position = (4410542.061819228, 3117779.8066218565, 3381821.901378448)
-        double3 xformOp:rotateXYZ = (-3.180554681463511e-15, -3.3920160831600468e-15, 5.381258144588668e-15)
-        double3 xformOp:scale = (1.0000000000000002, 1.0000000000000018, 1.0000000000000029)
-        double3 xformOp:translate = (-4.656612873077393e-10, 0, 1.862645149230957e-9)
+        double cesium:anchor:height = 518.6864071826265
+        double cesium:anchor:latitude = 32.22481000000208
+        double cesium:anchor:longitude = 35.25618723964261
+        double3 cesium:anchor:position = (4410544.672536226, 3117779.024561587, 3381822.960615659)
+        double3 xformOp:rotateXYZ = (0, 0, 0)
+        double3 xformOp:scale = (0.10000000149011715, 0.10000000149011612, 0.1000000014901169)
+        double3 xformOp:translate = (-2.145607808099124, -3.81842255679926e-8, 1.986406822183203)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 
         over "Combat_FPV_Drone_Kamikaze"
@@ -384,6 +360,10 @@ def Xform "bboxes" (
                                     {
                                         string semantic:Semantics_4Wbv:params:semanticData = "desirefxme2fpvdroneone"
                                         string semantic:Semantics_4Wbv:params:semanticType = "class"
+                                        quatf xformOp:orient = (1, 0, 0, 0)
+                                        float3 xformOp:scale = (1, 1, 1)
+                                        double3 xformOp:translate = (-6.202156122014912e-9, 0.016779694320606442, -2.7337594341036997e-9)
+                                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                                     }
                                 }
                             }
@@ -645,205 +625,6 @@ def Xform "bboxes" (
     }
 }
 
-def OmniGraph "ActionGraph"
-{
-    token evaluationMode = "Automatic"
-    token evaluator:type = "execution"
-    token fabricCacheBacking = "Shared"
-    int2 fileFormatVersion = (1, 7)
-    token pipelineStage = "pipelineStageSimulation"
-
-    def OmniGraphNode "on_playback_tick" (
-        prepend apiSchemas = ["NodeGraphNodeAPI"]
-    )
-    {
-        token node:type = "omni.graph.action.OnPlaybackTick"
-        int node:typeVersion = 1
-        custom double outputs:deltaSeconds
-        custom double outputs:frame
-        custom uint outputs:tick (
-            customData = {
-                bool isExecution = 1
-            }
-        )
-        custom double outputs:time
-        uniform token ui:nodegraph:node:expansionState = "open"
-        uniform float2 ui:nodegraph:node:pos = (-114.85501, 167.35501)
-    }
-
-    def OmniGraphNode "udp_to_global_position" (
-        prepend apiSchemas = ["NodeGraphNodeAPI"]
-    )
-    {
-        custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
-        custom int inputs:udp_port = 33335
-        token node:type = "omni.sim.position.UDPToGlobalPosition"
-        int node:typeVersion = 1
-        custom vector3d outputs:global_orientation
-        custom vector3d outputs:global_position
-        uniform token ui:nodegraph:node:expansionState = "open"
-        uniform float2 ui:nodegraph:node:pos = (361, 109)
-    }
-
-    def OmniGraphNode "global_position_to_local_position" (
-        prepend apiSchemas = ["NodeGraphNodeAPI"]
-    )
-    {
-        custom vector3d inputs:enu_reference
-        custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
-        custom vector3d inputs:global_orientation
-        prepend vector3d inputs:global_orientation.connect = </ActionGraph/udp_to_global_position.outputs:global_orientation>
-        custom vector3d inputs:global_position
-        prepend vector3d inputs:global_position.connect = </ActionGraph/udp_to_global_position.outputs:global_position>
-        custom float inputs:offset_pitch
-        custom float inputs:offset_roll
-        custom float inputs:offset_yaw
-        token node:type = "omni.sim.math.GlobalPositionToLocalPosition"
-        int node:typeVersion = 1
-        custom vector3f outputs:global_orientation
-        custom vector3d outputs:global_position
-        custom quatf outputs:local_orientation
-        custom vector3f outputs:local_position
-        uniform token ui:nodegraph:node:expansionState = "open"
-        uniform float2 ui:nodegraph:node:pos = (627.16187, 177.4065)
-    }
-
-    def OmniGraphNode "write_prim_attribute" (
-        prepend apiSchemas = ["NodeGraphNodeAPI"]
-    )
-    {
-        custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
-        custom token inputs:name = "xformOp:translate"
-        custom rel inputs:prim (
-            customData = {
-                dictionary omni = {
-                    dictionary graph = {
-                        string relType = "target"
-                    }
-                }
-            }
-        )
-        custom token inputs:primPath = "/bboxes/full_drone"
-        custom bool inputs:usdWriteBack
-        custom bool inputs:usePath = 1
-        custom token inputs:value (
-            customData = {
-                dictionary omni = {
-                    dictionary graph = {
-                        double3 attrValue = (0, 0, 0)
-                        string resolvedType = "double[3]"
-                    }
-                }
-            }
-        )
-        prepend token inputs:value.connect = </ActionGraph/global_position_to_local_position.outputs:local_position>
-        token node:type = "omni.graph.nodes.WritePrimAttribute"
-        int node:typeVersion = 2
-        custom uint outputs:execOut (
-            customData = {
-                bool isExecution = 1
-            }
-        )
-        custom bool state:correctlySetup
-        custom uint64 state:destAttrib
-        custom uint64 state:destPath
-        custom uint64 state:destPathToken
-        uniform token ui:nodegraph:node:expansionState = "open"
-        uniform float2 ui:nodegraph:node:pos = (1005.5304, 402.16202)
-    }
-
-    def OmniGraphNode "write_prim_attribute_01" (
-        prepend apiSchemas = ["NodeGraphNodeAPI"]
-    )
-    {
-        custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
-        custom token inputs:name = "xformOp:orient"
-        custom rel inputs:prim (
-            customData = {
-                dictionary omni = {
-                    dictionary graph = {
-                        string relType = "target"
-                    }
-                }
-            }
-        )
-        custom token inputs:primPath = "/bboxes/full_drone"
-        custom bool inputs:usdWriteBack
-        custom bool inputs:usePath = 1
-        custom token inputs:value (
-            customData = {
-                dictionary omni = {
-                    dictionary graph = {
-                        float4 attrValue = (0, 0, 0, 0)
-                        string resolvedType = "quatf[4]"
-                    }
-                }
-            }
-        )
-        prepend token inputs:value.connect = </ActionGraph/global_position_to_local_position.outputs:local_orientation>
-        token node:type = "omni.graph.nodes.WritePrimAttribute"
-        int node:typeVersion = 2
-        custom uint outputs:execOut (
-            customData = {
-                bool isExecution = 1
-            }
-        )
-        custom bool state:correctlySetup
-        custom uint64 state:destAttrib
-        custom uint64 state:destPath
-        custom uint64 state:destPathToken
-        uniform token ui:nodegraph:node:expansionState = "open"
-        uniform float2 ui:nodegraph:node:pos = (1022.7685, 74.00274)
-    }
-
-    def OmniGraphNode "script_node" (
-        prepend apiSchemas = ["NodeGraphNodeAPI"]
-    )
-    {
-        custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </ActionGraph/on_playback_tick.outputs:tick>
-        custom string inputs:script = """# This script is executed the first time the script node computes, or the next time
-# it computes after this script is modified or the 'Reset' button is pressed.
-#
-# The following callback functions may be defined in this script:
-#     setup(db): Called immediately after this script is executed
-#     compute(db): Called every time the node computes (should always be defined)
-#     cleanup(db): Called when the node is deleted or the reset button is pressed
-# Available variables:
-#    db: og.Database The node interface, attributes are exposed like db.inputs.foo
-#                    Use db.log_error, db.log_warning to report problems.
-#    og: The omni.graph.core module
-
-
-def setup(db: og.Database):
-    pass
-
-
-def cleanup(db: og.Database):
-    pass
-
-
-def compute(db: og.Database):
-    return True"""
-        custom token inputs:scriptPath = "/home/ofer/clones/ptz_sim/simulation/script_nodes/zoom_node.py"
-        custom bool inputs:usePath = 1
-        token node:type = "omni.graph.scriptnode.ScriptNode"
-        int node:typeVersion = 2
-        custom uint outputs:execOut (
-            customData = {
-                bool isExecution = 1
-            }
-        )
-        custom bool state:omni_initialized
-        uniform token ui:nodegraph:node:expansionState = "open"
-        uniform float2 ui:nodegraph:node:pos = (175.46771, 306.1258)
-    }
-}
-
 def OmniGraph "moving_sky"
 {
     token evaluationMode = "Automatic"
@@ -973,6 +754,211 @@ def compute(db: og.Database):
         custom bool state:omni_initialized
         uniform token ui:nodegraph:node:expansionState = "open"
         uniform float2 ui:nodegraph:node:pos = (308.9995, 34.38347)
+    }
+}
+
+def "Viewport_Measure" (
+    hide_in_stage_window = true
+)
+{
+}
+
+def OmniGraph "zoom___drone"
+{
+    token evaluationMode = "Automatic"
+    token evaluator:type = "execution"
+    token fabricCacheBacking = "Shared"
+    int2 fileFormatVersion = (1, 7)
+    token pipelineStage = "pipelineStageSimulation"
+
+    def OmniGraphNode "on_playback_tick" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        token node:type = "omni.graph.action.OnPlaybackTick"
+        int node:typeVersion = 1
+        custom double outputs:deltaSeconds
+        custom double outputs:frame
+        custom uint outputs:tick (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom double outputs:time
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (-114.85501, 167.35501)
+    }
+
+    def OmniGraphNode "udp_to_global_position" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        custom int inputs:udp_port = 33335
+        token node:type = "omni.sim.position.UDPToGlobalPosition"
+        int node:typeVersion = 1
+        custom vector3d outputs:global_orientation
+        custom vector3d outputs:global_position
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (361, 109)
+    }
+
+    def OmniGraphNode "global_position_to_local_position" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom vector3d inputs:enu_reference
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        custom vector3d inputs:global_orientation
+        prepend vector3d inputs:global_orientation.connect = </zoom___drone/udp_to_global_position.outputs:global_orientation>
+        custom vector3d inputs:global_position
+        prepend vector3d inputs:global_position.connect = </zoom___drone/udp_to_global_position.outputs:global_position>
+        custom float inputs:offset_pitch
+        custom float inputs:offset_roll
+        custom float inputs:offset_yaw
+        token node:type = "omni.sim.math.GlobalPositionToLocalPosition"
+        int node:typeVersion = 1
+        custom vector3f outputs:global_orientation
+        custom vector3d outputs:global_position
+        custom quatf outputs:local_orientation
+        custom vector3f outputs:local_position
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (627.16187, 177.4065)
+    }
+
+    def OmniGraphNode "write_prim_attribute" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        custom token inputs:name = "xformOp:translate"
+        custom rel inputs:prim (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        string relType = "target"
+                    }
+                }
+            }
+        )
+        custom token inputs:primPath = "/bboxes/full_drone"
+        custom bool inputs:usdWriteBack
+        custom bool inputs:usePath = 1
+        custom token inputs:value (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        double3 attrValue = (0, 0, 0)
+                        string resolvedType = "double[3]"
+                    }
+                }
+            }
+        )
+        prepend token inputs:value.connect = </zoom___drone/global_position_to_local_position.outputs:local_position>
+        token node:type = "omni.graph.nodes.WritePrimAttribute"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom bool state:correctlySetup
+        custom uint64 state:destAttrib
+        custom uint64 state:destPath
+        custom uint64 state:destPathToken
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (1005.5304, 402.16202)
+    }
+
+    def OmniGraphNode "write_prim_attribute_01" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        custom token inputs:name = "xformOp:orient"
+        custom rel inputs:prim (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        string relType = "target"
+                    }
+                }
+            }
+        )
+        custom token inputs:primPath = "/bboxes/full_drone"
+        custom bool inputs:usdWriteBack
+        custom bool inputs:usePath = 1
+        custom token inputs:value (
+            customData = {
+                dictionary omni = {
+                    dictionary graph = {
+                        float4 attrValue = (0, 0, 0, 0)
+                        string resolvedType = "quatf[4]"
+                    }
+                }
+            }
+        )
+        prepend token inputs:value.connect = </zoom___drone/global_position_to_local_position.outputs:local_orientation>
+        token node:type = "omni.graph.nodes.WritePrimAttribute"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom bool state:correctlySetup
+        custom uint64 state:destAttrib
+        custom uint64 state:destPath
+        custom uint64 state:destPathToken
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (1022.7685, 74.00274)
+    }
+
+    def OmniGraphNode "script_node" (
+        prepend apiSchemas = ["NodeGraphNodeAPI"]
+    )
+    {
+        custom uint inputs:execIn
+        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        custom string inputs:script = """# This script is executed the first time the script node computes, or the next time
+# it computes after this script is modified or the 'Reset' button is pressed.
+#
+# The following callback functions may be defined in this script:
+#     setup(db): Called immediately after this script is executed
+#     compute(db): Called every time the node computes (should always be defined)
+#     cleanup(db): Called when the node is deleted or the reset button is pressed
+# Available variables:
+#    db: og.Database The node interface, attributes are exposed like db.inputs.foo
+#                    Use db.log_error, db.log_warning to report problems.
+#    og: The omni.graph.core module
+
+
+def setup(db: og.Database):
+    pass
+
+
+def cleanup(db: og.Database):
+    pass
+
+
+def compute(db: og.Database):
+    return True"""
+        custom token inputs:scriptPath = "/home/ofer/clones/ptz_sim/simulation/script_nodes/zoom_node.py"
+        custom bool inputs:usePath = 1
+        token node:type = "omni.graph.scriptnode.ScriptNode"
+        int node:typeVersion = 2
+        custom uint outputs:execOut (
+            customData = {
+                bool isExecution = 1
+            }
+        )
+        custom bool state:omni_initialized
+        uniform token ui:nodegraph:node:expansionState = "open"
+        uniform float2 ui:nodegraph:node:pos = (175.46771, 306.1258)
     }
 }
 
