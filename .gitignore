@@ -2,6 +2,7 @@ out_data/
 /app
 .*
 data/
+dataset/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -213,3 +214,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Generated training data (scripts/gen_dataset.py) — hundreds of PNGs
+dataset/
