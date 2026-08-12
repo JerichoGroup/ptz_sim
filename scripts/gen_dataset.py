@@ -80,9 +80,9 @@ from isaac_core_dev_kit.udp.udp_utils import meters_to_latlon_offset  # noqa: E4
 # CONFIGURATION — everything you are likely to change lives here
 # ==============================================================================
 
-NUM_IMAGES = 200                # how many samples to produce
+NUM_IMAGES = 1000                # how many samples to produce
 
-OUT_DIR = os.path.join(_ROOT, "dataset")
+OUT_DIR = os.path.join(_ROOT, "dataset_1k_combat_FPB_Drone_KamiKaze")
 IMAGE_W, IMAGE_H = 1920, 1080   # must match the sim's render resolution
 
 # ---- camera pose ------------------------------------------------------------
@@ -150,19 +150,36 @@ def _fx_px(hfov_deg, width=IMAGE_W):
     return (width / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
 
 
+# Measured at startup by calibrate_aim() and applied to every placement.
+# WHY THIS EXISTS: the analytic basis below is right about elevation but was found
+# to be ~23 deg out in azimuth against the real sim, which pushed everything
+# aimed right of ~x=738 off the frame — those attempts were silently rejected, so
+# 200 consecutive images had the drone in the left third and nowhere else.
+#
+# The cause is ambiguous from a fixed-tilt dataset: a wrong azimuth constant and
+# a tilt-into-azimuth coupling in Isaac's gimbal are indistinguishable when tilt
+# never changes. Rather than guess, measure it: put the drone where the frame
+# centre should be, see where it actually lands, and fold the difference in. That
+# is correct whatever the underlying cause, and it re-measures if the pose or the
+# gimbal convention ever changes.
+AIM_CORR = {"az_deg": 0.0, "el_deg": 0.0}
+
+
 def enu_offset_for_pixel(u, v, range_m, pan, tilt, hfov_deg):
     """ENU offset (east, north, up) placing a point at pixel (u, v), `range_m` away.
 
     Standard pinhole ray, built on a camera basis in ENU:
         forward from the pan/tilt angles, right horizontal, up = right x forward.
     `range_m` is true 3-D distance, so the value Isaac reports back should match.
+    AIM_CORR shifts the assumed optical axis; see the note above it.
     """
     fx = _fx_px(hfov_deg)
     dx = u - IMAGE_W / 2.0                  # +right
     dy = IMAGE_H / 2.0 - v                  # +up (image v grows downward)
 
-    az = math.radians(CAM_AZIMUTH_AT_PAN0_DEG + pan * CAM_AZIMUTH_PER_PAN_DEG)
-    el = math.radians(tilt * cam_model.TILT_DEG_PER_UNIT)
+    az = math.radians(CAM_AZIMUTH_AT_PAN0_DEG + pan * CAM_AZIMUTH_PER_PAN_DEG
+                      + AIM_CORR["az_deg"])
+    el = math.radians(tilt * cam_model.TILT_DEG_PER_UNIT + AIM_CORR["el_deg"])
 
     fwd = (math.cos(el) * math.sin(az), math.cos(el) * math.cos(az), math.sin(el))
     right = (math.cos(az), -math.sin(az), 0.0)
@@ -522,6 +539,103 @@ def calibrate_camera_origin(link, placer, hfov_deg, pan, tilt):
     return err
 
 
+def place_and_read(link, placer, off, yaw=0.0, timeout=None,
+                   require_converged=True):
+    """Teleport to an ENU offset and return the first bbox frame that reflects it.
+
+    Waiting on convergence rather than sleeping is what keeps this fast AND
+    correct: bbox runs at 20 Hz, so a fixed sleep is either wasteful or a race.
+    """
+    timeout = SETTLE_TIMEOUT_S if timeout is None else timeout
+    placer.place(*off, yaw_deg=yaw)
+    seq0 = link.bbox_seq()
+    t_min = time.time() + POST_TELEPORT_MIN_S
+    end = time.time() + timeout
+    while time.time() < end:
+        cand, seq = link.target()
+        if cand and seq > seq0 + 1 and time.time() >= t_min:
+            err = math.dist((cand["east"], cand["north"], cand["up"]), off)
+            if not require_converged or err <= SETTLE_TOLERANCE_M:
+                return cand
+        time.sleep(0.05)
+    return None
+
+
+def calibrate_aim(link, placer, hfov, pan, tilt, rounds=4):
+    """Measure and remove the offset between our assumed optical axis and the real one.
+
+    Aim at the frame centre, see where the drone actually lands, and fold the
+    angular difference into AIM_CORR. Repeated a few times because each pass also
+    shifts where 'centre' is aimed, so it converges rather than solving in one go.
+
+    Without this, a systematic azimuth error silently biases the whole dataset:
+    everything aimed toward the far side of the frame lands off-camera and gets
+    rejected, so the drone only ever appears in one part of the image.
+    """
+    fx = _fx_px(hfov)
+    rng_m = sum(RANGE_M) / 2.0
+
+    # Bootstrap: the refinement below needs the target ON SCREEN to measure the
+    # error from its pixel, but the error can be big enough to put it off screen —
+    # which is exactly what happened (~33 deg, over half the 40 deg field). So
+    # first sweep the azimuth correction in steps narrower than the field of view
+    # until the target appears; a wider step could jump straight over the window.
+    probe = place_and_read(link, placer,
+                           enu_offset_for_pixel(IMAGE_W / 2.0, IMAGE_H / 2.0,
+                                                rng_m, pan, tilt, hfov), yaw=0.0)
+    if probe is None or not probe["in_frame"] or probe["x1"] < 0:
+        step = max(5.0, hfov * 0.5)
+        order = [0.0]
+        k = 1
+        while k * step <= 180.0:
+            order += [k * step, -k * step]
+            k += 1
+        found = False
+        for trial in order:
+            AIM_CORR["az_deg"] = trial
+            probe = place_and_read(link, placer,
+                                   enu_offset_for_pixel(IMAGE_W / 2.0, IMAGE_H / 2.0,
+                                                        rng_m, pan, tilt, hfov),
+                                   yaw=0.0)
+            if probe is not None and probe["in_frame"] and probe["x1"] >= 0:
+                print(f"[gen] aim search: target found with az{trial:+.0f} deg")
+                found = True
+                break
+        if not found:
+            AIM_CORR["az_deg"] = 0.0
+            print("[gen] WARNING: aim search swept +/-180 deg and never saw the "
+                  "target. Check TILT_UNITS and that the drone is being placed "
+                  "at all (is anything else driving UDP 33335?).")
+            return False
+
+    for i in range(rounds):
+        off = enu_offset_for_pixel(IMAGE_W / 2.0, IMAGE_H / 2.0, rng_m,
+                                   pan, tilt, hfov)
+        got = place_and_read(link, placer, off, yaw=0.0)
+        if got is None:
+            print("[gen] WARNING: aim calibration got no converged frame")
+            return False
+        if not got["in_frame"] or got["x1"] < 0:
+            print(f"[gen] WARNING: aim calibration pass {i + 1}: target not on "
+                  f"camera (in_frame={got['in_frame']}). Correction so far: "
+                  f"az{AIM_CORR['az_deg']:+.2f} el{AIM_CORR['el_deg']:+.2f} deg")
+            return False
+        cx = (got["x1"] + got["x2"]) / 2.0
+        cy = (got["y1"] + got["y2"]) / 2.0
+        ex, ey = cx - IMAGE_W / 2.0, cy - IMAGE_H / 2.0
+        # It appeared ex px right of centre, so the real axis is ex px LEFT of
+        # where we assumed it: subtract that angle. Same for elevation, with the
+        # image's y axis pointing down.
+        AIM_CORR["az_deg"] -= math.degrees(math.atan2(ex, fx))
+        AIM_CORR["el_deg"] += math.degrees(math.atan2(ey, fx))
+        print(f"[gen] aim calibration pass {i + 1}: centre landed at "
+              f"({cx:.0f},{cy:.0f}), off by ({ex:+.0f},{ey:+.0f}) px "
+              f"-> az{AIM_CORR['az_deg']:+.2f} el{AIM_CORR['el_deg']:+.2f} deg")
+        if abs(ex) < 3.0 and abs(ey) < 3.0:
+            break
+    return True
+
+
 def main():
     rng = random.Random(SEED)
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -557,6 +671,10 @@ def main():
     placer.cam[1] += meters_to_latlon_offset(corr[1], corr[0], placer.cam[0])[1]
     placer.cam[2] += corr[2]
 
+    if not calibrate_aim(link, placer, hfov, pose["pan"], pose["tilt"]):
+        print("[gen] WARNING: proceeding with an uncalibrated aim — the drone may "
+              "be confined to part of the frame")
+
     made = attempts = 0
     t_start = time.time()
     while made < NUM_IMAGES:
@@ -580,21 +698,7 @@ def main():
                 break
 
         desired = enu_offset_for_pixel(u, v, rng_m, pose["pan"], pose["tilt"], hfov)
-        placer.place(*desired, yaw_deg=yaw)
-
-        # ---- wait for the sim to actually reflect it ------------------------
-        seq0 = link.bbox_seq()
-        deadline = time.time() + SETTLE_TIMEOUT_S
-        t_min = time.time() + POST_TELEPORT_MIN_S
-        tgt = None
-        while time.time() < deadline:
-            cand, seq = link.target()
-            if cand and seq > seq0 + 1 and time.time() >= t_min:
-                err = math.dist((cand["east"], cand["north"], cand["up"]), desired)
-                if err <= SETTLE_TOLERANCE_M:
-                    tgt = cand
-                    break
-            time.sleep(0.05)
+        tgt = place_and_read(link, placer, desired, yaw=yaw)
 
         if tgt is None:
             continue                            # placement never converged
