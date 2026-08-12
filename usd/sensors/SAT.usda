@@ -8,7 +8,7 @@
             }
             dictionary Perspective = {
                 double3 position = (5, 5, 5)
-                double3 target = (-3.978038431995401e-8, -3.978038254359717e-8, 7.956076863990802e-8)
+                double3 target = (-3.978038431995401e-8, -3.978038254359717e-8, 7.95607677517296e-8)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -28,6 +28,7 @@
             double voxelCeiling = 460
         }
         dictionary omni_layer = {
+            string authoring_layer = "./SAT.usda"
             dictionary locked = {
             }
             dictionary muteness = {

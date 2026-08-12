@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (1.2154844403573417, 8.725496070732166, 5.7094374777676205)
-                double3 target = (0.4347759281422975, 0.9776134413765645, 0.8481725611935076)
+                double3 position = (-0.11371876678089432, 0.6244321522629401, 0.2548534037954373)
+                double3 target = (-0.10683203796195267, 0.5553781191159204, 0.23160345793385032)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -125,6 +125,7 @@ def CesiumGeoreferencePrim "NablusCesiumGeoreference"
 
 def Xform "tilesets"
 {
+    token visibility = "inherited"
     quatd xformOp:orient = (1, 0, 0, 0)
     double3 xformOp:scale = (1, 1, 1)
     double3 xformOp:translate = (0, 0, 0)
@@ -254,7 +255,7 @@ def Xform "tilesets"
         uint64 cesium:maximumCachedBytes = 2147483648
         float cesium:maximumScreenSpaceError = 8
         uniform token cesium:sourceType = "url"
-        string cesium:url = "http://192.168.30.105:8088/nablus/tileset.json"
+        string cesium:url = "http://192.168.30.100:8088/nablus/tileset.json"
         float3[] extent = [(-7982.7725, -5877.865, -751.89636), (8347.764, 3756.5452, 699.53015)]
     }
 }
@@ -290,13 +291,13 @@ def Xform "bboxes" (
     )
     {
         prepend rel cesium:anchor:georeferenceBinding = </NablusCesiumGeoreference>
-        double cesium:anchor:height = 518.6864071826265
-        double cesium:anchor:latitude = 32.22481000000208
-        double cesium:anchor:longitude = 35.25618723964261
-        double3 cesium:anchor:position = (4410544.672536226, 3117779.024561587, 3381822.960615659)
-        double3 xformOp:rotateXYZ = (0, 0, 0)
-        double3 xformOp:scale = (0.10000000149011715, 0.10000000149011612, 0.1000000014901169)
-        double3 xformOp:translate = (-2.145607808099124, -3.81842255679926e-8, 1.986406822183203)
+        double cesium:anchor:height = 516.7000000004931
+        double cesium:anchor:latitude = 32.22480999999974
+        double cesium:anchor:longitude = 35.25621000000001
+        double3 cesium:anchor:position = (4410542.0618192395, 3117779.8066218654, 3381821.9013784244)
+        double3 xformOp:rotateXYZ = (3.975693292586947e-15, -2.890248113626901e-15, -1.7220026575880598e-15)
+        double3 xformOp:scale = (0.10000000149011716, 0.10000000149011617, 0.10000000149011698)
+        double3 xformOp:translate = (4.656612873077393e-10, -2.7939677238464355e-8, 9.313225746154785e-10)
         uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 
         over "Combat_FPV_Drone_Kamikaze"
@@ -304,27 +305,39 @@ def Xform "bboxes" (
             over "Materials"
             {
                 over "fpv_drone_two" (
-                    prepend apiSchemas = ["SemanticsAPI:Semantics_sYmu"]
+                    prepend apiSchemas = ["SemanticsAPI:Semantics_sYmu", "SemanticsAPI:Semantics_0CQz", "SemanticsAPI:Semantics_zJp8"]
                 )
                 {
+                    string semantic:Semantics_0CQz:params:semanticData = "fpvdronetwo"
+                    string semantic:Semantics_0CQz:params:semanticType = "class"
                     string semantic:Semantics_sYmu:params:semanticData = "fpvdronetwo"
                     string semantic:Semantics_sYmu:params:semanticType = "class"
+                    string semantic:Semantics_zJp8:params:semanticData = "fpvdronetwo"
+                    string semantic:Semantics_zJp8:params:semanticType = "class"
                 }
 
                 over "fpv_drone_one" (
-                    prepend apiSchemas = ["SemanticsAPI:Semantics_0CQz"]
+                    prepend apiSchemas = ["SemanticsAPI:Semantics_0CQz", "SemanticsAPI:Semantics_65Zw", "SemanticsAPI:Semantics_2FFU"]
                 )
                 {
                     string semantic:Semantics_0CQz:params:semanticData = "fpvdroneone"
                     string semantic:Semantics_0CQz:params:semanticType = "class"
+                    string semantic:Semantics_2FFU:params:semanticData = "fpvdroneone"
+                    string semantic:Semantics_2FFU:params:semanticType = "class"
+                    string semantic:Semantics_65Zw:params:semanticData = "fpvdroneone"
+                    string semantic:Semantics_65Zw:params:semanticType = "class"
                 }
 
                 over "fpv_drone_three" (
-                    prepend apiSchemas = ["SemanticsAPI:Semantics_65Zw"]
+                    prepend apiSchemas = ["SemanticsAPI:Semantics_65Zw", "SemanticsAPI:Semantics_orTz", "SemanticsAPI:Semantics_u6x5"]
                 )
                 {
                     string semantic:Semantics_65Zw:params:semanticData = "fpvdronethree"
                     string semantic:Semantics_65Zw:params:semanticType = "class"
+                    string semantic:Semantics_orTz:params:semanticData = "fpvdronethree"
+                    string semantic:Semantics_orTz:params:semanticType = "class"
+                    string semantic:Semantics_u6x5:params:semanticData = "fpvdronethree"
+                    string semantic:Semantics_u6x5:params:semanticType = "class"
                 }
             }
 
@@ -341,9 +354,13 @@ def Xform "bboxes" (
                                 over "desirefx_me_1_fpv_drone_two_0"
                                 {
                                     over "desirefx_me_1_fpv_drone_two_0" (
-                                        prepend apiSchemas = ["SemanticsAPI:Semantics_orTz"]
+                                        prepend apiSchemas = ["SemanticsAPI:Semantics_orTz", "SemanticsAPI:Semantics_4Wbv", "SemanticsAPI:Semantics_GT9S"]
                                     )
                                     {
+                                        string semantic:Semantics_4Wbv:params:semanticData = "desirefxme1fpvdronetwo"
+                                        string semantic:Semantics_4Wbv:params:semanticType = "class"
+                                        string semantic:Semantics_GT9S:params:semanticData = "desirefxme1fpvdronetwo"
+                                        string semantic:Semantics_GT9S:params:semanticType = "class"
                                         string semantic:Semantics_orTz:params:semanticData = "desirefxme1fpvdronetwo"
                                         string semantic:Semantics_orTz:params:semanticType = "class"
                                     }
@@ -355,11 +372,15 @@ def Xform "bboxes" (
                                 over "desirefx_me_2_fpv_drone_one_0"
                                 {
                                     over "desirefx_me_2_fpv_drone_one_0" (
-                                        prepend apiSchemas = ["SemanticsAPI:Semantics_4Wbv"]
+                                        prepend apiSchemas = ["SemanticsAPI:Semantics_4Wbv", "SemanticsAPI:Semantics_wN6I", "SemanticsAPI:Semantics_jH9V"]
                                     )
                                     {
                                         string semantic:Semantics_4Wbv:params:semanticData = "desirefxme2fpvdroneone"
                                         string semantic:Semantics_4Wbv:params:semanticType = "class"
+                                        string semantic:Semantics_jH9V:params:semanticData = "desirefxme2fpvdroneone"
+                                        string semantic:Semantics_jH9V:params:semanticType = "class"
+                                        string semantic:Semantics_wN6I:params:semanticData = "desirefxme2fpvdroneone"
+                                        string semantic:Semantics_wN6I:params:semanticType = "class"
                                         quatf xformOp:orient = (1, 0, 0, 0)
                                         float3 xformOp:scale = (1, 1, 1)
                                         double3 xformOp:translate = (-6.202156122014912e-9, 0.016779694320606442, -2.7337594341036997e-9)
@@ -373,9 +394,13 @@ def Xform "bboxes" (
                                 over "desirefx_me_3_fpv_drone_three_0"
                                 {
                                     over "desirefx_me_3_fpv_drone_three_0" (
-                                        prepend apiSchemas = ["SemanticsAPI:Semantics_wN6I"]
+                                        prepend apiSchemas = ["SemanticsAPI:Semantics_wN6I", "SemanticsAPI:Semantics_SImG", "SemanticsAPI:Semantics_qx8N"]
                                     )
                                     {
+                                        string semantic:Semantics_qx8N:params:semanticData = "desirefxme3fpvdronethree"
+                                        string semantic:Semantics_qx8N:params:semanticType = "class"
+                                        string semantic:Semantics_SImG:params:semanticData = "desirefxme3fpvdronethree"
+                                        string semantic:Semantics_SImG:params:semanticType = "class"
                                         string semantic:Semantics_wN6I:params:semanticData = "desirefxme3fpvdronethree"
                                         string semantic:Semantics_wN6I:params:semanticType = "class"
                                     }
@@ -394,27 +419,39 @@ def Xform "bboxes" (
                 over "Materials"
                 {
                     over "fpv_drone_two" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_SImG"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_SImG", "SemanticsAPI:Semantics_dpQw", "SemanticsAPI:Semantics_zpc9"]
                     )
                     {
+                        string semantic:Semantics_dpQw:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_dpQw:params:semanticType = "class"
                         string semantic:Semantics_SImG:params:semanticData = "fpvdronetwo"
                         string semantic:Semantics_SImG:params:semanticType = "class"
+                        string semantic:Semantics_zpc9:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_zpc9:params:semanticType = "class"
                     }
 
                     over "fpv_drone_one" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_dpQw"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_dpQw", "SemanticsAPI:Semantics_8jpc", "SemanticsAPI:Semantics_bS2F"]
                     )
                     {
+                        string semantic:Semantics_8jpc:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_8jpc:params:semanticType = "class"
+                        string semantic:Semantics_bS2F:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_bS2F:params:semanticType = "class"
                         string semantic:Semantics_dpQw:params:semanticData = "fpvdroneone"
                         string semantic:Semantics_dpQw:params:semanticType = "class"
                     }
 
                     over "fpv_drone_three" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_8jpc"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_8jpc", "SemanticsAPI:Semantics_vJTG", "SemanticsAPI:Semantics_cpYU"]
                     )
                     {
                         string semantic:Semantics_8jpc:params:semanticData = "fpvdronethree"
                         string semantic:Semantics_8jpc:params:semanticType = "class"
+                        string semantic:Semantics_cpYU:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_cpYU:params:semanticType = "class"
+                        string semantic:Semantics_vJTG:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_vJTG:params:semanticType = "class"
                     }
                 }
 
@@ -431,9 +468,13 @@ def Xform "bboxes" (
                                     over "desirefx_me_5_fpv_drone_one_002_0"
                                     {
                                         over "desirefx_me_5_fpv_drone_one_002_0" (
-                                            prepend apiSchemas = ["SemanticsAPI:Semantics_vJTG"]
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_vJTG", "SemanticsAPI:Semantics_kEvs", "SemanticsAPI:Semantics_aPSL"]
                                         )
                                         {
+                                            string semantic:Semantics_aPSL:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_aPSL:params:semanticType = "class"
+                                            string semantic:Semantics_kEvs:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_kEvs:params:semanticType = "class"
                                             string semantic:Semantics_vJTG:params:semanticData = "desirefxme5fpvdroneone"
                                             string semantic:Semantics_vJTG:params:semanticType = "class"
                                         }
@@ -453,25 +494,37 @@ def Xform "bboxes" (
                 over "Materials"
                 {
                     over "fpv_drone_two" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_kEvs"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_kEvs", "SemanticsAPI:Semantics_hV49", "SemanticsAPI:Semantics_MqLC"]
                     )
                     {
+                        string semantic:Semantics_hV49:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_hV49:params:semanticType = "class"
                         string semantic:Semantics_kEvs:params:semanticData = "fpvdronetwo"
                         string semantic:Semantics_kEvs:params:semanticType = "class"
+                        string semantic:Semantics_MqLC:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_MqLC:params:semanticType = "class"
                     }
 
                     over "fpv_drone_one" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_hV49"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_hV49", "SemanticsAPI:Semantics_GW1U", "SemanticsAPI:Semantics_dgQ4"]
                     )
                     {
+                        string semantic:Semantics_dgQ4:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_dgQ4:params:semanticType = "class"
+                        string semantic:Semantics_GW1U:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_GW1U:params:semanticType = "class"
                         string semantic:Semantics_hV49:params:semanticData = "fpvdroneone"
                         string semantic:Semantics_hV49:params:semanticType = "class"
                     }
 
                     over "fpv_drone_three" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_GW1U"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_GW1U", "SemanticsAPI:Semantics_dewN", "SemanticsAPI:Semantics_EFhm"]
                     )
                     {
+                        string semantic:Semantics_dewN:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_dewN:params:semanticType = "class"
+                        string semantic:Semantics_EFhm:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_EFhm:params:semanticType = "class"
                         string semantic:Semantics_GW1U:params:semanticData = "fpvdronethree"
                         string semantic:Semantics_GW1U:params:semanticType = "class"
                     }
@@ -490,11 +543,15 @@ def Xform "bboxes" (
                                     over "desirefx_me_5_fpv_drone_one_002_0"
                                     {
                                         over "desirefx_me_5_fpv_drone_one_002_0" (
-                                            prepend apiSchemas = ["SemanticsAPI:Semantics_dewN"]
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_dewN", "SemanticsAPI:Semantics_z942", "SemanticsAPI:Semantics_IuJx"]
                                         )
                                         {
                                             string semantic:Semantics_dewN:params:semanticData = "desirefxme5fpvdroneone"
                                             string semantic:Semantics_dewN:params:semanticType = "class"
+                                            string semantic:Semantics_IuJx:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_IuJx:params:semanticType = "class"
+                                            string semantic:Semantics_z942:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_z942:params:semanticType = "class"
                                         }
                                     }
                                 }
@@ -512,25 +569,37 @@ def Xform "bboxes" (
                 over "Materials"
                 {
                     over "fpv_drone_two" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_z942"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_z942", "SemanticsAPI:Semantics_t7QD", "SemanticsAPI:Semantics_CrFv"]
                     )
                     {
+                        string semantic:Semantics_CrFv:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_CrFv:params:semanticType = "class"
+                        string semantic:Semantics_t7QD:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_t7QD:params:semanticType = "class"
                         string semantic:Semantics_z942:params:semanticData = "fpvdronetwo"
                         string semantic:Semantics_z942:params:semanticType = "class"
                     }
 
                     over "fpv_drone_one" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_t7QD"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_t7QD", "SemanticsAPI:Semantics_pw9w", "SemanticsAPI:Semantics_ixr8"]
                     )
                     {
+                        string semantic:Semantics_ixr8:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_ixr8:params:semanticType = "class"
+                        string semantic:Semantics_pw9w:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_pw9w:params:semanticType = "class"
                         string semantic:Semantics_t7QD:params:semanticData = "fpvdroneone"
                         string semantic:Semantics_t7QD:params:semanticType = "class"
                     }
 
                     over "fpv_drone_three" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_pw9w"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_pw9w", "SemanticsAPI:Semantics_AFkr", "SemanticsAPI:Semantics_hZrj"]
                     )
                     {
+                        string semantic:Semantics_AFkr:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_AFkr:params:semanticType = "class"
+                        string semantic:Semantics_hZrj:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_hZrj:params:semanticType = "class"
                         string semantic:Semantics_pw9w:params:semanticData = "fpvdronethree"
                         string semantic:Semantics_pw9w:params:semanticType = "class"
                     }
@@ -549,11 +618,15 @@ def Xform "bboxes" (
                                     over "desirefx_me_5_fpv_drone_one_002_0"
                                     {
                                         over "desirefx_me_5_fpv_drone_one_002_0" (
-                                            prepend apiSchemas = ["SemanticsAPI:Semantics_AFkr"]
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_AFkr", "SemanticsAPI:Semantics_Zjqo", "SemanticsAPI:Semantics_7R7p"]
                                         )
                                         {
+                                            string semantic:Semantics_7R7p:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_7R7p:params:semanticType = "class"
                                             string semantic:Semantics_AFkr:params:semanticData = "desirefxme5fpvdroneone"
                                             string semantic:Semantics_AFkr:params:semanticType = "class"
+                                            string semantic:Semantics_Zjqo:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_Zjqo:params:semanticType = "class"
                                         }
                                     }
                                 }
@@ -571,27 +644,39 @@ def Xform "bboxes" (
                 over "Materials"
                 {
                     over "fpv_drone_two" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_Zjqo"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_Zjqo", "SemanticsAPI:Semantics_geAd", "SemanticsAPI:Semantics_PsNv"]
                     )
                     {
+                        string semantic:Semantics_geAd:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_geAd:params:semanticType = "class"
+                        string semantic:Semantics_PsNv:params:semanticData = "fpvdronetwo"
+                        string semantic:Semantics_PsNv:params:semanticType = "class"
                         string semantic:Semantics_Zjqo:params:semanticData = "fpvdronetwo"
                         string semantic:Semantics_Zjqo:params:semanticType = "class"
                     }
 
                     over "fpv_drone_one" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_geAd"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_geAd", "SemanticsAPI:Semantics_5qtV", "SemanticsAPI:Semantics_hbqy"]
                     )
                     {
+                        string semantic:Semantics_5qtV:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_5qtV:params:semanticType = "class"
                         string semantic:Semantics_geAd:params:semanticData = "fpvdroneone"
                         string semantic:Semantics_geAd:params:semanticType = "class"
+                        string semantic:Semantics_hbqy:params:semanticData = "fpvdroneone"
+                        string semantic:Semantics_hbqy:params:semanticType = "class"
                     }
 
                     over "fpv_drone_three" (
-                        prepend apiSchemas = ["SemanticsAPI:Semantics_5qtV"]
+                        prepend apiSchemas = ["SemanticsAPI:Semantics_5qtV", "SemanticsAPI:Semantics_PkUj", "SemanticsAPI:Semantics_0bR2"]
                     )
                     {
+                        string semantic:Semantics_0bR2:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_0bR2:params:semanticType = "class"
                         string semantic:Semantics_5qtV:params:semanticData = "fpvdronethree"
                         string semantic:Semantics_5qtV:params:semanticType = "class"
+                        string semantic:Semantics_PkUj:params:semanticData = "fpvdronethree"
+                        string semantic:Semantics_PkUj:params:semanticType = "class"
                     }
                 }
 
@@ -608,11 +693,15 @@ def Xform "bboxes" (
                                     over "desirefx_me_5_fpv_drone_one_002_0"
                                     {
                                         over "desirefx_me_5_fpv_drone_one_002_0" (
-                                            prepend apiSchemas = ["SemanticsAPI:Semantics_PkUj"]
+                                            prepend apiSchemas = ["SemanticsAPI:Semantics_PkUj", "SemanticsAPI:Semantics_tEMw", "SemanticsAPI:Semantics_5gfi"]
                                         )
                                         {
+                                            string semantic:Semantics_5gfi:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_5gfi:params:semanticType = "class"
                                             string semantic:Semantics_PkUj:params:semanticData = "desirefxme5fpvdroneone"
                                             string semantic:Semantics_PkUj:params:semanticType = "class"
+                                            string semantic:Semantics_tEMw:params:semanticData = "desirefxme5fpvdroneone"
+                                            string semantic:Semantics_tEMw:params:semanticType = "class"
                                         }
                                     }
                                 }
@@ -622,6 +711,36 @@ def Xform "bboxes" (
                 }
             }
         }
+    }
+
+    def Mesh "Cube" (
+        prepend apiSchemas = ["CesiumGlobeAnchorSchemaAPI", "SemanticsAPI:Semantics_aOPp", "SemanticsAPI:Semantics_woWF"]
+    )
+    {
+        prepend rel cesium:anchor:georeferenceBinding = </NablusCesiumGeoreference>
+        double cesium:anchor:height = 516.7381715189399
+        double cesium:anchor:latitude = 32.224809999999096
+        double cesium:anchor:longitude = 35.25620982843082
+        double3 cesium:anchor:position = (4410542.097523997, 3117779.8120545913, 3381821.9217330455)
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 6, 2, 3, 7, 4, 5, 1, 0, 4, 0, 2, 6, 5, 7, 3, 1]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1), (1, 0), (1, 1), (0, 1), (0, 0), (0, 1), (0, 0), (1, 0), (1, 1), (0, 0), (1, 0), (1, 1), (0, 1), (0, 0), (1, 0), (1, 1), (0, 1), (1, 0), (1, 1), (0, 1), (0, 0)] (
+            interpolation = "faceVarying"
+        )
+        string semantic:Semantics_aOPp:params:semanticData = "Cube"
+        string semantic:Semantics_aOPp:params:semanticType = "class"
+        string semantic:Semantics_woWF:params:semanticData = "Cube"
+        string semantic:Semantics_woWF:params:semanticType = "class"
+        uniform token subdivisionScheme = "none"
+        quatd xformOp:orient = (1, 0, 0, 0)
+        double3 xformOp:scale = (0.08000000000000002, 0.08000000000000004, 0.08000000000000004)
+        double3 xformOp:translate = (-0.01617373852059245, -1.0989606380462646e-7, 0.038171520456671715)
+        uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate", "xformOp:orient", "xformOp:scale"]
     }
 }
 
@@ -759,11 +878,12 @@ def compute(db: og.Database):
 
 def "Viewport_Measure" (
     hide_in_stage_window = true
+    no_delete = true
 )
 {
 }
 
-def OmniGraph "zoom___drone"
+def OmniGraph "zoom_and_drone"
 {
     token evaluationMode = "Automatic"
     token evaluator:type = "execution"
@@ -794,7 +914,7 @@ def OmniGraph "zoom___drone"
     )
     {
         custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        prepend uint inputs:execIn.connect = </zoom_and_drone/on_playback_tick.outputs:tick>
         custom int inputs:udp_port = 33335
         token node:type = "omni.sim.position.UDPToGlobalPosition"
         int node:typeVersion = 1
@@ -810,11 +930,11 @@ def OmniGraph "zoom___drone"
     {
         custom vector3d inputs:enu_reference
         custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        prepend uint inputs:execIn.connect = </zoom_and_drone/on_playback_tick.outputs:tick>
         custom vector3d inputs:global_orientation
-        prepend vector3d inputs:global_orientation.connect = </zoom___drone/udp_to_global_position.outputs:global_orientation>
+        prepend vector3d inputs:global_orientation.connect = </zoom_and_drone/udp_to_global_position.outputs:global_orientation>
         custom vector3d inputs:global_position
-        prepend vector3d inputs:global_position.connect = </zoom___drone/udp_to_global_position.outputs:global_position>
+        prepend vector3d inputs:global_position.connect = </zoom_and_drone/udp_to_global_position.outputs:global_position>
         custom float inputs:offset_pitch
         custom float inputs:offset_roll
         custom float inputs:offset_yaw
@@ -833,7 +953,7 @@ def OmniGraph "zoom___drone"
     )
     {
         custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        prepend uint inputs:execIn.connect = </zoom_and_drone/on_playback_tick.outputs:tick>
         custom token inputs:name = "xformOp:translate"
         custom rel inputs:prim (
             customData = {
@@ -844,7 +964,7 @@ def OmniGraph "zoom___drone"
                 }
             }
         )
-        custom token inputs:primPath = "/bboxes/full_drone"
+        custom token inputs:primPath = "/bboxes"
         custom bool inputs:usdWriteBack
         custom bool inputs:usePath = 1
         custom token inputs:value (
@@ -857,7 +977,7 @@ def OmniGraph "zoom___drone"
                 }
             }
         )
-        prepend token inputs:value.connect = </zoom___drone/global_position_to_local_position.outputs:local_position>
+        prepend token inputs:value.connect = </zoom_and_drone/global_position_to_local_position.outputs:local_position>
         token node:type = "omni.graph.nodes.WritePrimAttribute"
         int node:typeVersion = 2
         custom uint outputs:execOut (
@@ -878,7 +998,7 @@ def OmniGraph "zoom___drone"
     )
     {
         custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        prepend uint inputs:execIn.connect = </zoom_and_drone/on_playback_tick.outputs:tick>
         custom token inputs:name = "xformOp:orient"
         custom rel inputs:prim (
             customData = {
@@ -889,7 +1009,7 @@ def OmniGraph "zoom___drone"
                 }
             }
         )
-        custom token inputs:primPath = "/bboxes/full_drone"
+        custom token inputs:primPath = "/bboxes"
         custom bool inputs:usdWriteBack
         custom bool inputs:usePath = 1
         custom token inputs:value (
@@ -902,7 +1022,7 @@ def OmniGraph "zoom___drone"
                 }
             }
         )
-        prepend token inputs:value.connect = </zoom___drone/global_position_to_local_position.outputs:local_orientation>
+        prepend token inputs:value.connect = </zoom_and_drone/global_position_to_local_position.outputs:local_orientation>
         token node:type = "omni.graph.nodes.WritePrimAttribute"
         int node:typeVersion = 2
         custom uint outputs:execOut (
@@ -923,7 +1043,7 @@ def OmniGraph "zoom___drone"
     )
     {
         custom uint inputs:execIn
-        prepend uint inputs:execIn.connect = </zoom___drone/on_playback_tick.outputs:tick>
+        prepend uint inputs:execIn.connect = </zoom_and_drone/on_playback_tick.outputs:tick>
         custom string inputs:script = """# This script is executed the first time the script node computes, or the next time
 # it computes after this script is modified or the 'Reset' button is pressed.
 #

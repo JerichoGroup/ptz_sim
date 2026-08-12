@@ -123,9 +123,8 @@ def Xform "World"
         )
         {
             custom uint inputs:execIn
-            custom double inputs:hz
-            custom string inputs:topic_name
             prepend uint inputs:execIn.connect = </World/BboxPublisher/on_playback_tick.outputs:tick>
+            custom double inputs:hz
             custom string inputs:script = """# This script is executed the first time the script node computes, or the next time
 # it computes after this script is modified or the 'Reset' button is pressed.
 #
@@ -150,6 +149,7 @@ def cleanup(db: og.Database):
 def compute(db: og.Database):
     return True"""
             custom token inputs:scriptPath = "../../../../../../simulation/script_nodes/bbox_node.py"
+            custom string inputs:topic_name
             custom bool inputs:usePath = 1
             token node:type = "omni.graph.scriptnode.ScriptNode"
             int node:typeVersion = 2
